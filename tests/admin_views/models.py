@@ -1,16 +1,16 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
 import datetime
-import tempfile
 import os
+import tempfile
+import uuid
 
 from django.contrib.auth.models import User
-from django.contrib.contenttypes import generic
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation,
+)
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.core.files.storage import FileSystemStorage
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 
 class Section(models.Model):
@@ -20,8 +20,17 @@ class Section(models.Model):
     """
     name = models.CharField(max_length=100)
 
+    def __str__(self):
+        return self.name
 
-@python_2_unicode_compatible
+    @property
+    def name_property(self):
+        """
+        A property that simply returns the name. Used to test #24461
+        """
+        return self.name
+
+
 class Article(models.Model):
     """
     A simple article to test admin views. Test backwards compatibility.
@@ -29,7 +38,9 @@ class Article(models.Model):
     title = models.CharField(max_length=100)
     content = models.TextField()
     date = models.DateTimeField()
-    section = models.ForeignKey(Section, null=True, blank=True)
+    section = models.ForeignKey(Section, models.CASCADE, null=True, blank=True)
+    another_section = models.ForeignKey(Section, models.CASCADE, null=True, blank=True, related_name='+')
+    sub_section = models.ForeignKey(Section, models.SET_NULL, null=True, blank=True, related_name='+')
 
     def __str__(self):
         return self.title
@@ -39,8 +50,21 @@ class Article(models.Model):
     model_year.admin_order_field = 'date'
     model_year.short_description = ''
 
+    def model_year_reversed(self):
+        return self.date.year
+    model_year_reversed.admin_order_field = '-date'
+    model_year_reversed.short_description = ''
 
-@python_2_unicode_compatible
+    def property_year(self):
+        return self.date.year
+    property_year.admin_order_field = 'date'
+    model_property_year = property(property_year)
+
+    @property
+    def model_month(self):
+        return self.date.month
+
+
 class Book(models.Model):
     """
     A simple book that has chapters.
@@ -51,41 +75,39 @@ class Book(models.Model):
         return self.name
 
 
-@python_2_unicode_compatible
 class Promo(models.Model):
     name = models.CharField(max_length=100, verbose_name='¿Name?')
-    book = models.ForeignKey(Book)
+    book = models.ForeignKey(Book, models.CASCADE)
+    author = models.ForeignKey(User, models.SET_NULL, blank=True, null=True)
 
     def __str__(self):
         return self.name
 
 
-@python_2_unicode_compatible
 class Chapter(models.Model):
     title = models.CharField(max_length=100, verbose_name='¿Title?')
     content = models.TextField()
-    book = models.ForeignKey(Book)
-
-    def __str__(self):
-        return self.title
+    book = models.ForeignKey(Book, models.CASCADE)
 
     class Meta:
         # Use a utf-8 bytestring to ensure it works (see #11710)
         verbose_name = '¿Chapter?'
 
+    def __str__(self):
+        return self.title
 
-@python_2_unicode_compatible
+
 class ChapterXtra1(models.Model):
-    chap = models.OneToOneField(Chapter, verbose_name='¿Chap?')
+    chap = models.OneToOneField(Chapter, models.CASCADE, verbose_name='¿Chap?')
     xtra = models.CharField(max_length=100, verbose_name='¿Xtra?')
+    guest_author = models.ForeignKey(User, models.SET_NULL, blank=True, null=True)
 
     def __str__(self):
         return '¿Xtra1: %s' % self.xtra
 
 
-@python_2_unicode_compatible
 class ChapterXtra2(models.Model):
-    chap = models.OneToOneField(Chapter, verbose_name='¿Chap?')
+    chap = models.OneToOneField(Chapter, models.CASCADE, verbose_name='¿Chap?')
     xtra = models.CharField(max_length=100, verbose_name='¿Xtra?')
 
     def __str__(self):
@@ -101,7 +123,6 @@ class CustomArticle(models.Model):
     date = models.DateTimeField()
 
 
-@python_2_unicode_compatible
 class ModelWithStringPrimaryKey(models.Model):
     string_pk = models.CharField(max_length=255, primary_key=True)
 
@@ -112,70 +133,116 @@ class ModelWithStringPrimaryKey(models.Model):
         return '/dummy/%s/' % self.string_pk
 
 
-@python_2_unicode_compatible
 class Color(models.Model):
     value = models.CharField(max_length=10)
-    warm = models.BooleanField()
+    warm = models.BooleanField(default=False)
+
     def __str__(self):
         return self.value
+
 
 # we replicate Color to register with another ModelAdmin
 class Color2(Color):
     class Meta:
         proxy = True
 
-@python_2_unicode_compatible
+
 class Thing(models.Model):
     title = models.CharField(max_length=20)
-    color = models.ForeignKey(Color, limit_choices_to={'warm': True})
+    color = models.ForeignKey(Color, models.CASCADE, limit_choices_to={'warm': True})
     pub_date = models.DateField(blank=True, null=True)
+
     def __str__(self):
         return self.title
 
 
-@python_2_unicode_compatible
 class Actor(models.Model):
     name = models.CharField(max_length=50)
     age = models.IntegerField()
+    title = models.CharField(max_length=50, null=True, blank=True)
+
     def __str__(self):
         return self.name
 
 
-@python_2_unicode_compatible
 class Inquisition(models.Model):
-    expected = models.BooleanField()
-    leader = models.ForeignKey(Actor)
+    expected = models.BooleanField(default=False)
+    leader = models.ForeignKey(Actor, models.CASCADE)
     country = models.CharField(max_length=20)
 
     def __str__(self):
         return "by %s from %s" % (self.leader, self.country)
 
 
-@python_2_unicode_compatible
 class Sketch(models.Model):
     title = models.CharField(max_length=100)
-    inquisition = models.ForeignKey(Inquisition, limit_choices_to={'leader__name': 'Palin',
-                                                                   'leader__age': 27,
-                                                                   'expected': False,
-                                                                   })
+    inquisition = models.ForeignKey(
+        Inquisition,
+        models.CASCADE,
+        limit_choices_to={
+            'leader__name': 'Palin',
+            'leader__age': 27,
+            'expected': False,
+        },
+    )
+    defendant0 = models.ForeignKey(
+        Actor,
+        models.CASCADE,
+        limit_choices_to={'title__isnull': False},
+        related_name='as_defendant0',
+    )
+    defendant1 = models.ForeignKey(
+        Actor,
+        models.CASCADE,
+        limit_choices_to={'title__isnull': True},
+        related_name='as_defendant1',
+    )
 
     def __str__(self):
         return self.title
 
 
+def today_callable_dict():
+    return {"last_action__gte": datetime.datetime.today()}
+
+
+def today_callable_q():
+    return models.Q(last_action__gte=datetime.datetime.today())
+
+
+class Character(models.Model):
+    username = models.CharField(max_length=100)
+    last_action = models.DateTimeField()
+
+    def __str__(self):
+        return self.username
+
+
+class StumpJoke(models.Model):
+    variation = models.CharField(max_length=100)
+    most_recently_fooled = models.ForeignKey(
+        Character,
+        models.CASCADE,
+        limit_choices_to=today_callable_dict,
+        related_name="+",
+    )
+    has_fooled_today = models.ManyToManyField(Character, limit_choices_to=today_callable_q, related_name="+")
+
+    def __str__(self):
+        return self.variation
+
+
 class Fabric(models.Model):
     NG_CHOICES = (
         ('Textured', (
-                ('x', 'Horizontal'),
-                ('y', 'Vertical'),
-            )
-        ),
+            ('x', 'Horizontal'),
+            ('y', 'Vertical'),
+        )),
         ('plain', 'Smooth'),
     )
     surface = models.CharField(max_length=20, choices=NG_CHOICES)
 
 
-@python_2_unicode_compatible
 class Person(models.Model):
     GENDER_CHOICES = (
         (1, "Male"),
@@ -190,25 +257,24 @@ class Person(models.Model):
         return self.name
 
 
-@python_2_unicode_compatible
 class Persona(models.Model):
     """
     A simple persona associated with accounts, to test inlining of related
     accounts which inherit from a common accounts class.
     """
     name = models.CharField(blank=False, max_length=80)
+
     def __str__(self):
         return self.name
 
 
-@python_2_unicode_compatible
 class Account(models.Model):
     """
     A simple, generic account encapsulating the information shared by all
     types of accounts.
     """
     username = models.CharField(blank=False, max_length=80)
-    persona = models.ForeignKey(Persona, related_name="accounts")
+    persona = models.ForeignKey(Persona, models.CASCADE, related_name="accounts")
     servicename = 'generic service'
 
     def __str__(self):
@@ -225,7 +291,6 @@ class BarAccount(Account):
     servicename = 'bar'
 
 
-@python_2_unicode_compatible
 class Subscriber(models.Model):
     name = models.CharField(blank=False, max_length=80)
     email = models.EmailField(blank=False, max_length=175)
@@ -250,30 +315,37 @@ class Podcast(Media):
     release_date = models.DateField()
 
     class Meta:
-        ordering = ('release_date',) # overridden in PodcastAdmin
+        ordering = ('release_date',)  # overridden in PodcastAdmin
 
 
 class Vodcast(Media):
-    media = models.OneToOneField(Media, primary_key=True, parent_link=True)
+    media = models.OneToOneField(Media, models.CASCADE, primary_key=True, parent_link=True)
     released = models.BooleanField(default=False)
 
 
 class Parent(models.Model):
     name = models.CharField(max_length=128)
 
+    def clean(self):
+        if self.name == '_invalid':
+            raise ValidationError('invalid')
+
 
 class Child(models.Model):
-    parent = models.ForeignKey(Parent, editable=False)
+    parent = models.ForeignKey(Parent, models.CASCADE, editable=False)
     name = models.CharField(max_length=30, blank=True)
 
+    def clean(self):
+        if self.name == '_invalid':
+            raise ValidationError('invalid')
 
-@python_2_unicode_compatible
+
 class EmptyModel(models.Model):
     def __str__(self):
         return "Primary key = %s" % self.id
 
 
-temp_storage = FileSystemStorage(tempfile.mkdtemp(dir=os.environ['DJANGO_TEST_TEMP_DIR']))
+temp_storage = FileSystemStorage(tempfile.mkdtemp())
 UPLOAD_TO = os.path.join(temp_storage.location, 'test_upload')
 
 
@@ -284,7 +356,7 @@ class Gallery(models.Model):
 class Picture(models.Model):
     name = models.CharField(max_length=100)
     image = models.FileField(storage=temp_storage, upload_to='test_upload')
-    gallery = models.ForeignKey(Gallery, related_name="pictures")
+    gallery = models.ForeignKey(Gallery, models.CASCADE, related_name="pictures")
 
 
 class Language(models.Model):
@@ -303,7 +375,7 @@ class Title(models.Model):
 
 
 class TitleTranslation(models.Model):
-    title = models.ForeignKey(Title)
+    title = models.ForeignKey(Title, models.CASCADE)
     text = models.CharField(max_length=100)
 
 
@@ -312,7 +384,7 @@ class Recommender(Title):
 
 
 class Recommendation(Title):
-    recommender = models.ForeignKey(Recommender)
+    the_recommender = models.ForeignKey(Recommender, models.CASCADE)
 
 
 class Collector(models.Model):
@@ -320,25 +392,25 @@ class Collector(models.Model):
 
 
 class Widget(models.Model):
-    owner = models.ForeignKey(Collector)
+    owner = models.ForeignKey(Collector, models.CASCADE)
     name = models.CharField(max_length=100)
 
 
 class DooHickey(models.Model):
     code = models.CharField(max_length=10, primary_key=True)
-    owner = models.ForeignKey(Collector)
+    owner = models.ForeignKey(Collector, models.CASCADE)
     name = models.CharField(max_length=100)
 
 
 class Grommet(models.Model):
     code = models.AutoField(primary_key=True)
-    owner = models.ForeignKey(Collector)
+    owner = models.ForeignKey(Collector, models.CASCADE)
     name = models.CharField(max_length=100)
 
 
 class Whatsit(models.Model):
     index = models.IntegerField(primary_key=True)
-    owner = models.ForeignKey(Collector)
+    owner = models.ForeignKey(Collector, models.CASCADE)
     name = models.CharField(max_length=100)
 
 
@@ -347,13 +419,12 @@ class Doodad(models.Model):
 
 
 class FancyDoodad(Doodad):
-    owner = models.ForeignKey(Collector)
+    owner = models.ForeignKey(Collector, models.CASCADE)
     expensive = models.BooleanField(default=True)
 
 
-@python_2_unicode_compatible
 class Category(models.Model):
-    collector = models.ForeignKey(Collector)
+    collector = models.ForeignKey(Collector, models.CASCADE)
     order = models.PositiveIntegerField()
 
     class Meta:
@@ -363,22 +434,25 @@ class Category(models.Model):
         return '%s:o%s' % (self.id, self.order)
 
 
+def link_posted_default():
+    return datetime.date.today() - datetime.timedelta(days=7)
+
+
 class Link(models.Model):
-    posted = models.DateField(
-        default=lambda: datetime.date.today() - datetime.timedelta(days=7)
-    )
+    posted = models.DateField(default=link_posted_default)
     url = models.URLField()
-    post = models.ForeignKey("Post")
+    post = models.ForeignKey("Post", models.CASCADE)
+    readonly_link_content = models.TextField()
 
 
 class PrePopulatedPost(models.Model):
     title = models.CharField(max_length=100)
-    published = models.BooleanField()
+    published = models.BooleanField(default=False)
     slug = models.SlugField()
 
 
 class PrePopulatedSubPost(models.Model):
-    post = models.ForeignKey(PrePopulatedPost)
+    post = models.ForeignKey(PrePopulatedPost, models.CASCADE)
     subtitle = models.CharField(max_length=100)
     subslug = models.SlugField()
 
@@ -386,17 +460,24 @@ class PrePopulatedSubPost(models.Model):
 class Post(models.Model):
     title = models.CharField(max_length=100, help_text="Some help text for the title (with unicode ŠĐĆŽćžšđ)")
     content = models.TextField(help_text="Some help text for the content (with unicode ŠĐĆŽćžšđ)")
+    readonly_content = models.TextField()
     posted = models.DateField(
-            default=datetime.date.today,
-            help_text="Some help text for the date (with unicode ŠĐĆŽćžšđ)"
+        default=datetime.date.today,
+        help_text="Some help text for the date (with unicode ŠĐĆŽćžšđ)"
     )
-    public = models.NullBooleanField()
+    public = models.BooleanField(null=True, blank=True)
 
     def awesomeness_level(self):
         return "Very awesome."
 
 
-@python_2_unicode_compatible
+# Proxy model to test overridden fields attrs on Post model so as not to
+# interfere with other tests.
+class FieldOverridePost(Post):
+    class Meta:
+        proxy = True
+
+
 class Gadget(models.Model):
     name = models.CharField(max_length=100)
 
@@ -404,7 +485,6 @@ class Gadget(models.Model):
         return self.name
 
 
-@python_2_unicode_compatible
 class Villain(models.Model):
     name = models.CharField(max_length=100)
 
@@ -416,71 +496,77 @@ class SuperVillain(Villain):
     pass
 
 
-@python_2_unicode_compatible
 class FunkyTag(models.Model):
     "Because we all know there's only one real use case for GFKs."
     name = models.CharField(max_length=25)
-    content_type = models.ForeignKey(ContentType)
+    content_type = models.ForeignKey(ContentType, models.CASCADE)
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey('content_type', 'object_id')
+    content_object = GenericForeignKey('content_type', 'object_id')
 
     def __str__(self):
         return self.name
 
 
-@python_2_unicode_compatible
 class Plot(models.Model):
     name = models.CharField(max_length=100)
-    team_leader = models.ForeignKey(Villain, related_name='lead_plots')
-    contact = models.ForeignKey(Villain, related_name='contact_plots')
-    tags = generic.GenericRelation(FunkyTag)
+    team_leader = models.ForeignKey(Villain, models.CASCADE, related_name='lead_plots')
+    contact = models.ForeignKey(Villain, models.CASCADE, related_name='contact_plots')
+    tags = GenericRelation(FunkyTag)
 
     def __str__(self):
         return self.name
 
 
-@python_2_unicode_compatible
 class PlotDetails(models.Model):
     details = models.CharField(max_length=100)
-    plot = models.OneToOneField(Plot)
+    plot = models.OneToOneField(Plot, models.CASCADE, null=True, blank=True)
 
     def __str__(self):
         return self.details
 
 
-@python_2_unicode_compatible
+class PlotProxy(Plot):
+    class Meta:
+        proxy = True
+
+
 class SecretHideout(models.Model):
     """ Secret! Not registered with the admin! """
     location = models.CharField(max_length=100)
-    villain = models.ForeignKey(Villain)
+    villain = models.ForeignKey(Villain, models.CASCADE)
 
     def __str__(self):
         return self.location
 
 
-@python_2_unicode_compatible
 class SuperSecretHideout(models.Model):
     """ Secret! Not registered with the admin! """
     location = models.CharField(max_length=100)
-    supervillain = models.ForeignKey(SuperVillain)
+    supervillain = models.ForeignKey(SuperVillain, models.CASCADE)
 
     def __str__(self):
         return self.location
 
 
-@python_2_unicode_compatible
-class CyclicOne(models.Model):
-    name = models.CharField(max_length=25)
-    two = models.ForeignKey('CyclicTwo')
+class Bookmark(models.Model):
+    name = models.CharField(max_length=60)
+    tag = GenericRelation(FunkyTag, related_query_name='bookmark')
 
     def __str__(self):
         return self.name
 
 
-@python_2_unicode_compatible
+class CyclicOne(models.Model):
+    name = models.CharField(max_length=25)
+    two = models.ForeignKey('CyclicTwo', models.CASCADE)
+
+    def __str__(self):
+        return self.name
+
+
 class CyclicTwo(models.Model):
     name = models.CharField(max_length=25)
-    one = models.ForeignKey(CyclicOne)
+    one = models.ForeignKey(CyclicOne, models.CASCADE)
 
     def __str__(self):
         return self.name
@@ -489,15 +575,41 @@ class CyclicTwo(models.Model):
 class Topping(models.Model):
     name = models.CharField(max_length=20)
 
+    def __str__(self):
+        return self.name
+
 
 class Pizza(models.Model):
     name = models.CharField(max_length=20)
-    toppings = models.ManyToManyField('Topping')
+    toppings = models.ManyToManyField('Topping', related_name='pizzas')
+
+
+# Pizza's ModelAdmin has readonly_fields = ['toppings'].
+# toppings is editable for this model's admin.
+class ReadablePizza(Pizza):
+    class Meta:
+        proxy = True
+
+
+# No default permissions are created for this model and both name and toppings
+# are readonly for this model's admin.
+class ReadOnlyPizza(Pizza):
+    class Meta:
+        proxy = True
+        default_permissions = ()
 
 
 class Album(models.Model):
-    owner = models.ForeignKey(User)
+    owner = models.ForeignKey(User, models.SET_NULL, null=True, blank=True)
     title = models.CharField(max_length=30)
+
+
+class Song(models.Model):
+    name = models.CharField(max_length=20)
+    album = models.ForeignKey(Album, on_delete=models.RESTRICT)
+
+    def __str__(self):
+        return self.name
 
 
 class Employee(Person):
@@ -506,20 +618,30 @@ class Employee(Person):
 
 class WorkHour(models.Model):
     datum = models.DateField()
-    employee = models.ForeignKey(Employee)
+    employee = models.ForeignKey(Employee, models.CASCADE)
 
 
 class Question(models.Model):
     question = models.CharField(max_length=20)
+    posted = models.DateField(default=datetime.date.today)
+    expires = models.DateTimeField(null=True, blank=True)
+    related_questions = models.ManyToManyField('self')
+
+    def __str__(self):
+        return self.question
 
 
-@python_2_unicode_compatible
 class Answer(models.Model):
-    question = models.ForeignKey(Question, on_delete=models.PROTECT)
+    question = models.ForeignKey(Question, models.PROTECT)
     answer = models.CharField(max_length=20)
 
     def __str__(self):
         return self.answer
+
+
+class Answer2(Answer):
+    class Meta:
+        proxy = True
 
 
 class Reservation(models.Model):
@@ -527,19 +649,16 @@ class Reservation(models.Model):
     price = models.IntegerField()
 
 
-DRIVER_CHOICES = (
-    ('bill', 'Bill G'),
-    ('steve', 'Steve J'),
-)
-
-RESTAURANT_CHOICES = (
-    ('indian', 'A Taste of India'),
-    ('thai', 'Thai Pography'),
-    ('pizza', 'Pizza Mama'),
-)
-
-
 class FoodDelivery(models.Model):
+    DRIVER_CHOICES = (
+        ('bill', 'Bill G'),
+        ('steve', 'Steve J'),
+    )
+    RESTAURANT_CHOICES = (
+        ('indian', 'A Taste of India'),
+        ('thai', 'Thai Pography'),
+        ('pizza', 'Pizza Mama'),
+    )
     reference = models.CharField(max_length=100)
     driver = models.CharField(max_length=100, choices=DRIVER_CHOICES, blank=True)
     restaurant = models.CharField(max_length=100, choices=RESTAURANT_CHOICES, blank=True)
@@ -548,7 +667,6 @@ class FoodDelivery(models.Model):
         unique_together = (("driver", "restaurant"),)
 
 
-@python_2_unicode_compatible
 class CoverLetter(models.Model):
     author = models.CharField(max_length=30)
     date_written = models.DateField(null=True, blank=True)
@@ -567,7 +685,6 @@ class ShortMessage(models.Model):
     timestamp = models.DateTimeField(null=True, blank=True)
 
 
-@python_2_unicode_compatible
 class Telegram(models.Model):
     title = models.CharField(max_length=30)
     date_sent = models.DateField(null=True, blank=True)
@@ -589,7 +706,13 @@ class OtherStory(models.Model):
 class ComplexSortedPerson(models.Model):
     name = models.CharField(max_length=100)
     age = models.PositiveIntegerField()
-    is_employee = models.NullBooleanField()
+    is_employee = models.BooleanField(null=True)
+
+
+class PluggableSearchPerson(models.Model):
+    name = models.CharField(max_length=100)
+    age = models.PositiveIntegerField()
+
 
 class PrePopulatedPostLargeSlug(models.Model):
     """
@@ -598,29 +721,35 @@ class PrePopulatedPostLargeSlug(models.Model):
     the javascript (ie, using THOUSAND_SEPARATOR ends up with maxLength=1,000)
     """
     title = models.CharField(max_length=100)
-    published = models.BooleanField()
-    slug = models.SlugField(max_length=1000)
+    published = models.BooleanField(default=False)
+    # `db_index=False` because MySQL cannot index large CharField (#21196).
+    slug = models.SlugField(max_length=1000, db_index=False)
+
 
 class AdminOrderedField(models.Model):
     order = models.IntegerField()
     stuff = models.CharField(max_length=200)
 
+
 class AdminOrderedModelMethod(models.Model):
     order = models.IntegerField()
     stuff = models.CharField(max_length=200)
+
     def some_order(self):
         return self.order
     some_order.admin_order_field = 'order'
+
 
 class AdminOrderedAdminMethod(models.Model):
     order = models.IntegerField()
     stuff = models.CharField(max_length=200)
 
+
 class AdminOrderedCallable(models.Model):
     order = models.IntegerField()
     stuff = models.CharField(max_length=200)
 
-@python_2_unicode_compatible
+
 class Report(models.Model):
     title = models.CharField(max_length=100)
 
@@ -635,12 +764,16 @@ class MainPrepopulated(models.Model):
         max_length=20,
         choices=(('option one', 'Option One'),
                  ('option two', 'Option Two')))
-    slug1 = models.SlugField()
-    slug2 = models.SlugField()
+    slug1 = models.SlugField(blank=True)
+    slug2 = models.SlugField(blank=True)
+    slug3 = models.SlugField(blank=True, allow_unicode=True)
+
 
 class RelatedPrepopulated(models.Model):
-    parent = models.ForeignKey(MainPrepopulated)
+    parent = models.ForeignKey(MainPrepopulated, models.CASCADE)
     name = models.CharField(max_length=75)
+    fk = models.ForeignKey('self', models.CASCADE, blank=True, null=True)
+    m2m = models.ManyToManyField('self', blank=True)
     pubdate = models.DateField()
     status = models.CharField(
         max_length=20,
@@ -658,6 +791,7 @@ class UnorderedObject(models.Model):
     name = models.CharField(max_length=255)
     bool = models.BooleanField(default=True)
 
+
 class UndeletableObject(models.Model):
     """
     Model whose show_delete in admin change_view has been disabled
@@ -665,16 +799,203 @@ class UndeletableObject(models.Model):
     """
     name = models.CharField(max_length=255)
 
+
+class UnchangeableObject(models.Model):
+    """
+    Model whose change_view is disabled in admin
+    Refs #20640.
+    """
+
+
 class UserMessenger(models.Model):
     """
     Dummy class for testing message_user functions on ModelAdmin
     """
+
 
 class Simple(models.Model):
     """
     Simple model with nothing on it for use in testing
     """
 
+
 class Choice(models.Model):
-    choice = models.IntegerField(blank=True, null=True,
-        choices=((1, 'Yes'), (0, 'No'), (None, 'No opinion')))
+    choice = models.IntegerField(
+        blank=True, null=True,
+        choices=((1, 'Yes'), (0, 'No'), (None, 'No opinion')),
+    )
+
+
+class ParentWithDependentChildren(models.Model):
+    """
+    Issue #20522
+    Model where the validation of child foreign-key relationships depends
+    on validation of the parent
+    """
+    some_required_info = models.PositiveIntegerField()
+    family_name = models.CharField(max_length=255, blank=False)
+
+
+class DependentChild(models.Model):
+    """
+    Issue #20522
+    Model that depends on validation of the parent class for one of its
+    fields to validate during clean
+    """
+    parent = models.ForeignKey(ParentWithDependentChildren, models.CASCADE)
+    family_name = models.CharField(max_length=255)
+
+
+class _Manager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(pk__gt=1)
+
+
+class FilteredManager(models.Model):
+    def __str__(self):
+        return "PK=%d" % self.pk
+
+    pk_gt_1 = _Manager()
+    objects = models.Manager()
+
+
+class EmptyModelVisible(models.Model):
+    """ See ticket #11277. """
+
+
+class EmptyModelHidden(models.Model):
+    """ See ticket #11277. """
+
+
+class EmptyModelMixin(models.Model):
+    """ See ticket #11277. """
+
+
+class State(models.Model):
+    name = models.CharField(max_length=100, verbose_name='State verbose_name')
+
+
+class City(models.Model):
+    state = models.ForeignKey(State, models.CASCADE)
+    name = models.CharField(max_length=100, verbose_name='City verbose_name')
+
+    def get_absolute_url(self):
+        return '/dummy/%s/' % self.pk
+
+
+class Restaurant(models.Model):
+    city = models.ForeignKey(City, models.CASCADE)
+    name = models.CharField(max_length=100)
+
+    def get_absolute_url(self):
+        return '/dummy/%s/' % self.pk
+
+
+class Worker(models.Model):
+    work_at = models.ForeignKey(Restaurant, models.CASCADE)
+    name = models.CharField(max_length=50)
+    surname = models.CharField(max_length=50)
+
+
+# Models for #23329
+class ReferencedByParent(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
+
+class ParentWithFK(models.Model):
+    fk = models.ForeignKey(
+        ReferencedByParent,
+        models.CASCADE,
+        to_field='name',
+        related_name='hidden+',
+    )
+
+
+class ChildOfReferer(ParentWithFK):
+    pass
+
+
+# Models for #23431
+class InlineReferer(models.Model):
+    pass
+
+
+class ReferencedByInline(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
+
+class InlineReference(models.Model):
+    referer = models.ForeignKey(InlineReferer, models.CASCADE)
+    fk = models.ForeignKey(
+        ReferencedByInline,
+        models.CASCADE,
+        to_field='name',
+        related_name='hidden+',
+    )
+
+
+class Recipe(models.Model):
+    rname = models.CharField(max_length=20, unique=True)
+
+
+class Ingredient(models.Model):
+    iname = models.CharField(max_length=20, unique=True)
+    recipes = models.ManyToManyField(Recipe, through='RecipeIngredient')
+
+
+class RecipeIngredient(models.Model):
+    ingredient = models.ForeignKey(Ingredient, models.CASCADE, to_field='iname')
+    recipe = models.ForeignKey(Recipe, models.CASCADE, to_field='rname')
+
+
+# Model for #23839
+class NotReferenced(models.Model):
+    # Don't point any FK at this model.
+    pass
+
+
+# Models for #23934
+class ExplicitlyProvidedPK(models.Model):
+    name = models.IntegerField(primary_key=True)
+
+
+class ImplicitlyGeneratedPK(models.Model):
+    name = models.IntegerField(unique=True)
+
+
+# Models for #25622
+class ReferencedByGenRel(models.Model):
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey('content_type', 'object_id')
+
+
+class GenRelReference(models.Model):
+    references = GenericRelation(ReferencedByGenRel)
+
+
+class ParentWithUUIDPK(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=100)
+
+    def __str__(self):
+        return str(self.id)
+
+
+class RelatedWithUUIDPKModel(models.Model):
+    parent = models.ForeignKey(ParentWithUUIDPK, on_delete=models.SET_NULL, null=True, blank=True)
+
+
+class Author(models.Model):
+    pass
+
+
+class Authorship(models.Model):
+    book = models.ForeignKey(Book, models.CASCADE)
+    author = models.ForeignKey(Author, models.CASCADE)
+
+
+class UserProxy(User):
+    """Proxy a model with a different app_label."""
+    class Meta:
+        proxy = True

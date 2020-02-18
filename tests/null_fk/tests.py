@@ -1,10 +1,9 @@
-from __future__ import absolute_import,  unicode_literals
-
 from django.db.models import Q
 from django.test import TestCase
 
-from .models import (SystemDetails, Item, PropertyValue, SystemInfo, Forum,
-    Post, Comment)
+from .models import (
+    Comment, Forum, Item, Post, PropertyValue, SystemDetails, SystemInfo,
+)
 
 
 class NullFkTests(TestCase):
@@ -23,7 +22,7 @@ class NullFkTests(TestCase):
         # test for #7369.
         c = Comment.objects.select_related().get(id=c1.id)
         self.assertEqual(c.post, p)
-        self.assertEqual(Comment.objects.select_related().get(id=c2.id).post, None)
+        self.assertIsNone(Comment.objects.select_related().get(id=c2.id).post)
 
         self.assertQuerysetEqual(
             Comment.objects.select_related('post__forum__system_info').all(),
@@ -31,11 +30,11 @@ class NullFkTests(TestCase):
                 (c1.id, 'My first comment', '<Post: First Post>'),
                 (c2.id, 'My second comment', 'None')
             ],
-            transform = lambda c: (c.id, c.comment_text, repr(c.post))
+            transform=lambda c: (c.id, c.comment_text, repr(c.post))
         )
 
         # Regression test for #7530, #7716.
-        self.assertTrue(Comment.objects.select_related('post').filter(post__isnull=True)[0].post is None)
+        self.assertIsNone(Comment.objects.select_related('post').filter(post__isnull=True)[0].post)
 
         self.assertQuerysetEqual(
             Comment.objects.select_related('post__forum__system_info__system_details'),
@@ -43,14 +42,14 @@ class NullFkTests(TestCase):
                 (c1.id, 'My first comment', '<Post: First Post>'),
                 (c2.id, 'My second comment', 'None')
             ],
-            transform = lambda c: (c.id, c.comment_text, repr(c.post))
+            transform=lambda c: (c.id, c.comment_text, repr(c.post))
         )
 
     def test_combine_isnull(self):
         item = Item.objects.create(title='Some Item')
         pv = PropertyValue.objects.create(label='Some Value')
         item.props.create(key='a', value=pv)
-        item.props.create(key='b') # value=NULL
+        item.props.create(key='b')  # value=NULL
         q1 = Q(props__key='a', props__value=pv)
         q2 = Q(props__key='b', props__value__isnull=True)
 

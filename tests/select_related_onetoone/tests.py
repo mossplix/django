@@ -1,27 +1,26 @@
-from __future__ import absolute_import
+from django.core.exceptions import FieldError
+from django.db.models import FilteredRelation
+from django.test import SimpleTestCase, TestCase
 
-from django.test import TestCase
-from django.utils import unittest
-
-from .models import (User, UserProfile, UserStat, UserStatResult, StatDetails,
-    AdvancedUserStat, Image, Product, Parent1, Parent2, Child1, Child2, Child3,
-    Child4)
+from .models import (
+    AdvancedUserStat, Child1, Child2, Child3, Child4, Image, LinkedList,
+    Parent1, Parent2, Product, StatDetails, User, UserProfile, UserStat,
+    UserStatResult,
+)
 
 
 class ReverseSelectRelatedTestCase(TestCase):
-    def setUp(self):
+    @classmethod
+    def setUpTestData(cls):
         user = User.objects.create(username="test")
-        userprofile = UserProfile.objects.create(user=user, state="KS",
-                                                 city="Lawrence")
+        UserProfile.objects.create(user=user, state="KS", city="Lawrence")
         results = UserStatResult.objects.create(results='first results')
-        userstat = UserStat.objects.create(user=user, posts=150,
-                                           results=results)
-        details = StatDetails.objects.create(base_stats=userstat, comments=259)
+        userstat = UserStat.objects.create(user=user, posts=150, results=results)
+        StatDetails.objects.create(base_stats=userstat, comments=259)
 
         user2 = User.objects.create(username="bob")
         results2 = UserStatResult.objects.create(results='moar results')
-        advstat = AdvancedUserStat.objects.create(user=user2, posts=200, karma=5,
-                                                  results=results2)
+        advstat = AdvancedUserStat.objects.create(user=user2, posts=200, karma=5, results=results2)
         StatDetails.objects.create(base_stats=advstat, comments=250)
         p1 = Parent1(name1="Only Parent1")
         p1.save()
@@ -82,6 +81,7 @@ class ReverseSelectRelatedTestCase(TestCase):
             stat = UserStat.objects.select_related('user', 'advanceduserstat').get(posts=200)
             self.assertEqual(stat.advanceduserstat.posts, 200)
             self.assertEqual(stat.user.username, 'bob')
+        with self.assertNumQueries(0):
             self.assertEqual(stat.advanceduserstat.user.username, 'bob')
 
     def test_nullable_relation(self):
@@ -172,28 +172,26 @@ class ReverseSelectRelatedTestCase(TestCase):
             self.assertEqual(p.child1.child4.value, p.child1.value)
             self.assertEqual(p.child1.child4.value4, 4)
 
-    @unittest.expectedFailure
     def test_inheritance_deferred(self):
         c = Child4.objects.create(name1='n1', name2='n2', value=1, value4=4)
         with self.assertNumQueries(1):
             p = Parent2.objects.select_related('child1').only(
-                'id2',  'child1__value').get(name2="n2")
+                'id2', 'child1__value').get(name2="n2")
             self.assertEqual(p.id2, c.id2)
             self.assertEqual(p.child1.value, 1)
         p = Parent2.objects.select_related('child1').only(
-            'id2',  'child1__value').get(name2="n2")
+            'id2', 'child1__value').get(name2="n2")
         with self.assertNumQueries(1):
             self.assertEqual(p.name2, 'n2')
         p = Parent2.objects.select_related('child1').only(
-            'id2',  'child1__value').get(name2="n2")
+            'id2', 'child1__value').get(name2="n2")
         with self.assertNumQueries(1):
             self.assertEqual(p.child1.name2, 'n2')
 
-    @unittest.expectedFailure
     def test_inheritance_deferred2(self):
         c = Child4.objects.create(name1='n1', name2='n2', value=1, value4=4)
-        qs = Parent2.objects.select_related('child1', 'child4').only(
-            'id2',  'child1__value', 'child1__child4__value4')
+        qs = Parent2.objects.select_related('child1', 'child1__child4').only(
+            'id2', 'child1__value', 'child1__child4__value4')
         with self.assertNumQueries(1):
             p = qs.get(name2="n2")
             self.assertEqual(p.id2, c.id2)
@@ -204,7 +202,36 @@ class ReverseSelectRelatedTestCase(TestCase):
         with self.assertNumQueries(1):
             self.assertEqual(p.child1.name2, 'n2')
         p = qs.get(name2="n2")
-        with self.assertNumQueries(1):
+        with self.assertNumQueries(0):
             self.assertEqual(p.child1.name1, 'n1')
-        with self.assertNumQueries(1):
             self.assertEqual(p.child1.child4.name1, 'n1')
+
+    def test_self_relation(self):
+        item1 = LinkedList.objects.create(name='item1')
+        LinkedList.objects.create(name='item2', previous_item=item1)
+        with self.assertNumQueries(1):
+            item1_db = LinkedList.objects.select_related('next_item').get(name='item1')
+            self.assertEqual(item1_db.next_item.name, 'item2')
+
+
+class ReverseSelectRelatedValidationTests(SimpleTestCase):
+    """
+    Rverse related fields should be listed in the validation message when an
+    invalid field is given in select_related().
+    """
+    non_relational_error = "Non-relational field given in select_related: '%s'. Choices are: %s"
+    invalid_error = "Invalid field name(s) given in select_related: '%s'. Choices are: %s"
+
+    def test_reverse_related_validation(self):
+        fields = 'userprofile, userstat'
+
+        with self.assertRaisesMessage(FieldError, self.invalid_error % ('foobar', fields)):
+            list(User.objects.select_related('foobar'))
+
+        with self.assertRaisesMessage(FieldError, self.non_relational_error % ('username', fields)):
+            list(User.objects.select_related('username'))
+
+    def test_reverse_related_validation_with_filtered_relation(self):
+        fields = 'userprofile, userstat, relation'
+        with self.assertRaisesMessage(FieldError, self.invalid_error % ('foobar', fields)):
+            list(User.objects.annotate(relation=FilteredRelation('userprofile')).select_related('foobar'))

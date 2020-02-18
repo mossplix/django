@@ -5,17 +5,12 @@ development, and SHOULD NOT be used in a production setting.
 """
 import os
 import posixpath
-try:
-    from urllib.parse import unquote
-except ImportError:     # Python 2
-    from urllib import unquote
 
 from django.conf import settings
-from django.core.exceptions import ImproperlyConfigured
+from django.contrib.staticfiles import finders
 from django.http import Http404
 from django.views import static
 
-from django.contrib.staticfiles import finders
 
 def serve(request, path, insecure=False, **kwargs):
     """
@@ -24,17 +19,17 @@ def serve(request, path, insecure=False, **kwargs):
 
     To use, put a URL pattern such as::
 
-        (r'^(?P<path>.*)$', 'django.contrib.staticfiles.views.serve')
+        from django.contrib.staticfiles import views
+
+        path('<path:path>', views.serve)
 
     in your URLconf.
 
-    It uses the django.views.static view to serve the found files.
+    It uses the django.views.static.serve() view to serve the found files.
     """
     if not settings.DEBUG and not insecure:
-        raise ImproperlyConfigured("The staticfiles view can only be used in "
-                                   "debug mode or if the --insecure "
-                                   "option of 'runserver' is used")
-    normalized_path = posixpath.normpath(unquote(path)).lstrip('/')
+        raise Http404
+    normalized_path = posixpath.normpath(path).lstrip('/')
     absolute_path = finders.find(normalized_path)
     if not absolute_path:
         if path.endswith('/') or path == '':

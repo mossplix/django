@@ -1,27 +1,27 @@
 import logging
 
+from django.contrib.gis.gdal import GDALException
+from django.contrib.gis.geos import GEOSException, GEOSGeometry
 from django.forms.widgets import Textarea
-from django.template import loader, Context
-from django.templatetags.static import static
-from django.utils import six
 from django.utils import translation
-
-from django.contrib.gis.gdal import OGRException
-from django.contrib.gis.geos import GEOSGeometry, GEOSException
 
 # Creating a template context that contains Django settings
 # values needed by admin map templates.
-geo_context = Context({'LANGUAGE_BIDI' : translation.get_language_bidi()})
+geo_context = {'LANGUAGE_BIDI': translation.get_language_bidi()}
 logger = logging.getLogger('django.contrib.gis')
 
 
 class OpenLayersWidget(Textarea):
     """
-    Renders an OpenLayers map using the WKT of the geometry.
+    Render an OpenLayers map using the WKT of the geometry.
     """
-    def render(self, name, value, attrs=None):
+    def get_context(self, name, value, attrs):
         # Update the template parameters with any attributes passed in.
-        if attrs: self.params.update(attrs)
+        if attrs:
+            self.params.update(attrs)
+            self.params['editable'] = self.params['modifiable']
+        else:
+            self.params['editable'] = True
 
         # Defaulting the WKT value to a blank string -- this
         # will be tested in the JavaScript and the appropriate
@@ -30,14 +30,11 @@ class OpenLayersWidget(Textarea):
 
         # If a string reaches here (via a validation error on another
         # field) then just reconstruct the Geometry.
-        if isinstance(value, six.string_types):
+        if value and isinstance(value, str):
             try:
                 value = GEOSGeometry(value)
             except (GEOSException, ValueError) as err:
-                logger.error(
-                    "Error creating geometry from value '%s' (%s)" % (
-                    value, err)
-                )
+                logger.error("Error creating geometry from value '%s' (%s)", value, err)
                 value = None
 
         if (value and value.geom_type.upper() != self.geom_type and
@@ -53,7 +50,7 @@ class OpenLayersWidget(Textarea):
         self.params['name'] = name
         # note: we must switch out dashes for underscores since js
         # functions are created using the module variable
-        js_safe_name = self.params['name'].replace('-','_')
+        js_safe_name = self.params['name'].replace('-', '_')
         self.params['module'] = 'geodjango_%s' % js_safe_name
 
         if value:
@@ -65,10 +62,10 @@ class OpenLayersWidget(Textarea):
                     ogr = value.ogr
                     ogr.transform(srid)
                     wkt = ogr.wkt
-                except OGRException as err:
+                except GDALException as err:
                     logger.error(
-                        "Error transforming geometry from srid '%s' to srid '%s' (%s)" % (
-                        value.srid, srid, err)
+                        "Error transforming geometry from srid '%s' to srid '%s' (%s)",
+                        value.srid, srid, err
                     )
                     wkt = ''
             else:
@@ -78,15 +75,15 @@ class OpenLayersWidget(Textarea):
             # geometry.
             self.params['wkt'] = wkt
 
-        return loader.render_to_string(self.template, self.params,
-                                       context_instance=geo_context)
+        self.params.update(geo_context)
+        return self.params
 
     def map_options(self):
-        "Builds the map options hash for the OpenLayers template."
-
+        """Build the map options hash for the OpenLayers template."""
         # JavaScript construction utilities for the Bounds and Projection.
         def ol_bounds(extent):
-            return 'new OpenLayers.Bounds(%s)' % str(extent)
+            return 'new OpenLayers.Bounds(%s)' % extent
+
         def ol_projection(srid):
             return 'new OpenLayers.Projection("EPSG:%s")' % srid
 

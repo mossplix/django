@@ -1,276 +1,217 @@
 # This file is distributed under the same license as the Django package.
 #
 # Translators:
-# Jannis Leidel <jannis@leidel.info>, 2011.
-# Анхбаяр Анхаа <l.ankhbayar@gmail.com>, 2011-2012.
+# Bayarkhuu Bataa, 2015,2017
+# Delgermurun Purevkhuuu <info@delgermurun.com>, 2013
+# dolugen <dolugen@gmail.com>, 2016
+# Jannis Leidel <jannis@leidel.info>, 2011
+# miigaa ... <b.myagmardorj@gmail.com>, 2015
+# Zorig <zorig_ezd@yahoo.com>, 2013-2014,2017
+# Анхбаяр Анхаа <l.ankhbayar@gmail.com>, 2015
+# Баясгалан Цэвлээ <bayasaa_7672@yahoo.com>, 2015
 msgid ""
 msgstr ""
-"Project-Id-Version: Django\n"
+"Project-Id-Version: django\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2012-12-15 23:27+0100\n"
-"PO-Revision-Date: 2012-12-18 02:26+0000\n"
-"Last-Translator: Анхбаяр Анхаа <l.ankhbayar@gmail.com>\n"
-"Language-Team: Mongolian (http://www.transifex.com/projects/p/django/"
-"language/mn/)\n"
+"POT-Creation-Date: 2017-09-24 13:46+0200\n"
+"PO-Revision-Date: 2017-10-19 13:49+0000\n"
+"Last-Translator: Bayarkhuu Bataa\n"
+"Language-Team: Mongolian (http://www.transifex.com/django/django/language/"
+"mn/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Language: mn\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: admin.py:41
 msgid "Personal info"
 msgstr "Хувийн мэдээлэл"
 
-#: admin.py:42
 msgid "Permissions"
 msgstr "Эрхүүд"
 
-#: admin.py:44
 msgid "Important dates"
 msgstr "Чухал огноо"
 
-#: admin.py:126
+#, python-format
+msgid "%(name)s object with primary key %(key)r does not exist."
+msgstr "%(key)r анхдагч түлхүүртэй %(name)s обьект олдсонгүй."
+
 msgid "Password changed successfully."
 msgstr "Нууц үг амжилттай өөрчлөгдлөө."
 
-#: admin.py:136
 #, python-format
 msgid "Change password: %s"
 msgstr "Нууц үг өөрчлөх: %s"
 
-#: forms.py:31 tests/forms.py:251 tests/forms.py:256 tests/forms.py:384
+msgid "Authentication and Authorization"
+msgstr "Нэвтрэлт ба зөвшөөрөл"
+
+msgid "password"
+msgstr "нууц үг"
+
+msgid "last login"
+msgstr "сүүлд нэвтэрсэн"
+
 msgid "No password set."
 msgstr "Нууц үг тохируулаагүй."
 
-#: forms.py:37 tests/forms.py:261 tests/forms.py:267
 msgid "Invalid password format or unknown hashing algorithm."
 msgstr "Нууц үгийн буруу формат эсвэл үл мэдэгдэх хаш алгоритм байна."
 
-#: forms.py:67
-msgid "A user with that username already exists."
-msgstr "Ийм хэрэглэгчийн нэртэй хэрэглэгч өмнө нь бүртгүүлсэн байна."
-
-#: forms.py:68 forms.py:269 forms.py:329
 msgid "The two password fields didn't match."
 msgstr "Хоёр нууц үг зөрж байна."
 
-#: forms.py:70 forms.py:115
-msgid "Username"
-msgstr "Хэрэглэгчийн нэр"
-
-#: forms.py:72 forms.py:116
-msgid "Required. 30 characters or fewer. Letters, digits and @/./+/-/_ only."
-msgstr ""
-"Заавал. 30 ба түүнээс бага үсэгтэй. Зөвхөн латин үсэг, тоо болон @/./+/-/_ "
-"тэмдэгтүүдийг зөвшөөрнө."
-
-#: forms.py:75 forms.py:119
-msgid "This value may contain only letters, numbers and @/./+/-/_ characters."
-msgstr "Энэ утга дотор зөвхөн үсэг, тоо болон @/./+/-/_ тэмдэгтүүд байж болно."
-
-#: forms.py:77 forms.py:121 forms.py:148 forms.py:331
 msgid "Password"
 msgstr "Нууц үг "
 
-#: forms.py:79
 msgid "Password confirmation"
-msgstr "Нууц үгийн баталгаа"
+msgstr "Нууц үгийн баталгаажуулалт"
 
-#: forms.py:81
-msgid "Enter the same password as above, for verification."
-msgstr "Батлахын тулд дээрх нууц үгээ ахин хийнэ үү."
+msgid "Enter the same password as before, for verification."
+msgstr "Баталгаажуулахын тулд дээрх нууц үгээ ахин оруулна уу."
 
-#: forms.py:122
 msgid ""
 "Raw passwords are not stored, so there is no way to see this user's "
-"password, but you can change the password using <a href=\"password/\">this "
-"form</a>."
+"password, but you can change the password using <a href=\"{}\">this form</a>."
 msgstr ""
-"Жинхэн нууц үгүүдийг хадгалдаггүй учраас хэрэглэгчийн нууц үгийг харах "
-"боломжгүй юм. Гэхдээ та нууц үгийг <a href=\"password/\">цонхоор</a> өөрчлөх "
-"боломжтой."
+"Хэрэглэгчийн нууц үгийг хувиргалгүйгээр хадгалдаггүй учир шууд харах "
+"боломжгүй, гэхдээ <a href=\"{}\">энэ маягт</a> ашиглан өөрчилж болно."
 
-#: forms.py:151
 #, python-format
 msgid ""
 "Please enter a correct %(username)s and password. Note that both fields may "
 "be case-sensitive."
 msgstr ""
-"Зөв %(username)s, нууц үг оруулна уу. Том жижиг үсэг ялгаатай болхын "
+"Зөв %(username)s, нууц үг оруулна уу. Том жижиг үсэг ялгаатай болохыг "
 "анхаарна уу."
 
-#: forms.py:153
-msgid ""
-"Your Web browser doesn't appear to have cookies enabled. Cookies are "
-"required for logging in."
-msgstr ""
-"Та вэб хөтчөө cookie ажиллахаар тохируулаагүй юм шиг байна. Нэвтрэхэд cookie "
-"шаардлагатай байдаг."
-
-#: forms.py:155
 msgid "This account is inactive."
 msgstr "Энэ бүртгэл идэвхгүй байна."
 
-#: forms.py:206
-msgid ""
-"That email address doesn't have an associated user account. Are you sure "
-"you've registered?"
-msgstr ""
-"Энэ цахим шуудангийн хаягаар бүртгүүлсэн хэрэглэгчийн бүртгэл байхгүй байна. "
-"Та бүртгүүлсэн гэдэгтээ итгэлтэй байна уу?"
-
-#: forms.py:208 tests/forms.py:374
-msgid ""
-"The user account associated with this email address cannot reset the "
-"password."
-msgstr ""
-"Энэ цахим хаягаар бүртгүүлсэн хэрэглэгчийн нууц үгийг сэргээх боломжгүй."
-
-#: forms.py:211
 msgid "Email"
-msgstr "Цахим хаяг"
+msgstr "Имэйл"
 
-#: forms.py:271
 msgid "New password"
 msgstr "Шинэ нууц үг"
 
-#: forms.py:273
 msgid "New password confirmation"
-msgstr "Шинэ нууц үгийн баталгаа"
+msgstr "Шинэ нууц үгийн баталгаажуулалт"
 
-#: forms.py:302
 msgid "Your old password was entered incorrectly. Please enter it again."
 msgstr "Хуучин нууц үгээ буруу оруулсан байна. Ахин оруулна уу."
 
-#: forms.py:305
 msgid "Old password"
 msgstr "Хуучин нууц үг"
 
-#: forms.py:333
 msgid "Password (again)"
-msgstr "Нууц үг (ахиад)"
+msgstr "Нууц үг (давтан)"
 
-#: hashers.py:241 hashers.py:292 hashers.py:321 hashers.py:349 hashers.py:378
-#: hashers.py:412
 msgid "algorithm"
-msgstr "Алгоритм"
+msgstr "алгоритм"
 
-#: hashers.py:242
 msgid "iterations"
 msgstr "давталтууд"
 
-#: hashers.py:243 hashers.py:294 hashers.py:322 hashers.py:350 hashers.py:413
 msgid "salt"
 msgstr "давс"
 
-#: hashers.py:244 hashers.py:323 hashers.py:351 hashers.py:379 hashers.py:414
 msgid "hash"
 msgstr "хаш"
 
-#: hashers.py:293
+msgid "variety"
+msgstr "боломж"
+
+msgid "version"
+msgstr "хувилбар"
+
+msgid "memory cost"
+msgstr "санах ойн өртөг"
+
+msgid "time cost"
+msgstr "цагын зардал"
+
+msgid "parallelism"
+msgstr "зэрэгцүүлэлт"
+
 msgid "work factor"
 msgstr "ажлын байгуулагч"
 
-#: hashers.py:295
 msgid "checksum"
-msgstr "checksum"
+msgstr "шалгах дүн"
 
-#: models.py:72 models.py:121
 msgid "name"
 msgstr "нэр"
 
-#: models.py:74
+msgid "content type"
+msgstr "агуулгын төрөл"
+
 msgid "codename"
 msgstr "Код"
 
-#: models.py:78
 msgid "permission"
 msgstr "зөвшөөрөл"
 
-#: models.py:79 models.py:123
 msgid "permissions"
 msgstr "зөвшөөрлүүд"
 
-#: models.py:128
 msgid "group"
 msgstr "бүлэг "
 
-#: models.py:129 models.py:301
 msgid "groups"
 msgstr "бүлгүүд"
 
-#: models.py:200
-msgid "password"
-msgstr "нууц үг"
-
-#: models.py:201
-msgid "last login"
-msgstr "сүүлд нэвтэрсэн"
-
-#: models.py:298
 msgid "superuser status"
 msgstr "Удирдлагын төлөв"
 
-#: models.py:299
 msgid ""
 "Designates that this user has all permissions without explicitly assigning "
 "them."
 msgstr "Энэ хэрэглэгчид бүх зөвшөөрөл байгааг ил тод харуулалгүй тодорхойлно. "
 
-#: models.py:302
 msgid ""
 "The groups this user belongs to. A user will get all permissions granted to "
-"each of his/her group."
+"each of their groups."
 msgstr ""
-"Бүлэгүүд энэ хэрэглэгчийнхээс тусдаа. Хэрэглэгчид нь сонгосон бүлэгт "
-"олгогдсон бүх эрх зөвшөөрөгдөх болно."
+"Хэрэглэгчийн харьяалагдах бүлгүүд. Хэрэглэгчид сонгосон бүлгийн бүх эрх "
+"зөвшөөрөгдөх болно. "
 
-#: models.py:306
 msgid "user permissions"
 msgstr "хэрэглэгчийн эрхүүд"
 
-#: models.py:377
+msgid "Specific permissions for this user."
+msgstr "Хэрэглэгчид тодорхойлж өгсөн эрх"
+
 msgid "username"
 msgstr "хэрэглэгчийн нэр"
 
-#: models.py:378
-msgid ""
-"Required. 30 characters or fewer. Letters, numbers and @/./+/-/_ characters"
+msgid "Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only."
 msgstr ""
-"Заавал. 30 болон түүнээс бага тэмдэгт. Үсэг, тоо болон @/./+/-/_ тэмдэгтүүд "
-"ашиглана уу."
+"Заавал. 150 ба түүнээс бага үсэгтэй. Зөвхөн латин үсэг, тоо болон @/./+/-/_ "
+"тэмдэгтүүдийг зөвшөөрнө."
 
-#: models.py:381
-msgid "Enter a valid username."
-msgstr "Зөв нэвтрэх нэр оруулна уу."
+msgid "A user with that username already exists."
+msgstr "Ийм хэрэглэгчийн нэртэй хэрэглэгч өмнө нь бүртгүүлсэн байна."
 
-#: models.py:383
 msgid "first name"
 msgstr "нэр"
 
-#: models.py:384
 msgid "last name"
 msgstr "овог"
 
-#: models.py:385
 msgid "email address"
-msgstr "цахим хаяг"
+msgstr "имэйл хаяг"
 
-#: models.py:386
 msgid "staff status"
 msgstr "Хэрэглэгчдийн төлөв"
 
-#: models.py:387
 msgid "Designates whether the user can log into this admin site."
 msgstr ""
 "Уг удирдлагын сайт руу хэрэглэгч нэвтрэх боломжтой эсэхийг тодорхойлно."
 
-#: models.py:389
 msgid "active"
 msgstr "идэвхтэй"
 
-#: models.py:390
 msgid ""
 "Designates whether this user should be treated as active. Unselect this "
 "instead of deleting accounts."
@@ -278,23 +219,92 @@ msgstr ""
 "Энэ хэрэглэгчийг идэвхтэй болгох эсэхийг тодорхойлно. Бүртгэлийг нь устгахын "
 "оронд сонгохгүй байхад л хангалттай."
 
-#: models.py:392
 msgid "date joined"
 msgstr "бүртгүүлсэн огноо"
 
-#: models.py:400
 msgid "user"
 msgstr "хэрэглэгч "
 
-#: models.py:401
 msgid "users"
 msgstr "хэрэглэгчид"
 
-#: views.py:94
+#, python-format
+msgid ""
+"This password is too short. It must contain at least %(min_length)d "
+"character."
+msgid_plural ""
+"This password is too short. It must contain at least %(min_length)d "
+"characters."
+msgstr[0] ""
+"Нууц үг хэтэрхий богино байна. Хамгийн багадаа %(min_length)d тэмдэгтээс "
+"бүрдэх ёстой."
+msgstr[1] ""
+"Нууц үг хэтэрхий богино байна. Хамгийн багадаа %(min_length)d тэмдэгтээс "
+"бүрдэх ёстой."
+
+#, python-format
+msgid "Your password must contain at least %(min_length)d character."
+msgid_plural "Your password must contain at least %(min_length)d characters."
+msgstr[0] "Нууц хамгийн багадаа %(min_length)d тэмдэгтээс бүрдэх ёстой."
+msgstr[1] "Нууц хамгийн багадаа %(min_length)d тэмдэгтээс бүрдэх ёстой."
+
+#, python-format
+msgid "The password is too similar to the %(verbose_name)s."
+msgstr "Нууц үг %(verbose_name)s мэдээлэлтэй хэтэрхий адилхан байна."
+
+msgid "Your password can't be too similar to your other personal information."
+msgstr "Таны нууц үг бусад хувийн мэдээлэлтэй төстэй байж болохгүй."
+
+msgid "This password is too common."
+msgstr "Энэ нууц үг хэтэрхий нийтлэг байна."
+
+msgid "Your password can't be a commonly used password."
+msgstr "Таны нууц үг хүмүүсийн нийтлэг ашигладаг нууц үг байж болохгүй."
+
+msgid "This password is entirely numeric."
+msgstr "Нууц үг дан тооноос бүрдсэн байна."
+
+msgid "Your password can't be entirely numeric."
+msgstr "Таны нууц үг бүхэлдээ тооноос бүрдэж болохгүй."
+
+#, python-format
+msgid "Password reset on %(site_name)s"
+msgstr "%(site_name)s cайт дээрх нууц үг шинэчлэлт"
+
+msgid ""
+"Enter a valid username. This value may contain only English letters, "
+"numbers, and @/./+/-/_ characters."
+msgstr ""
+"Зөв хэрэглэгчийн нэр оруулна уу. Англи хэлний үсэг, тоо болон @ . + - _ "
+"тэмдэгтүүдийг ашиглаж болно."
+
+msgid ""
+"Enter a valid username. This value may contain only letters, numbers, and "
+"@/./+/-/_ characters."
+msgstr ""
+"Зөв хэрэглэгчийн нэр оруулна уу. Англи хэлний үсэг, тоо болон @ . + - _ "
+"тэмдэгтүүдийг ашиглаж болно."
+
 msgid "Logged out"
 msgstr "Гарсан"
 
-#: templates/registration/password_reset_subject.txt:2
-#, python-format
-msgid "Password reset on %(site_name)s"
-msgstr "%(site_name)s cайт дээрх нууц үг сэргээлт"
+msgid "Password reset"
+msgstr "Нууц үг шинэчлэх"
+
+msgid "Password reset sent"
+msgstr "Нууц үг шинэчлэх хүсэлт илгээгдлээ"
+
+msgid "Enter new password"
+msgstr "Шинэ нууц үг оруулах"
+
+msgid "Password reset unsuccessful"
+msgstr "Нууц үг шинэчлэлт амжилтгүй боллоо"
+
+msgid "Password reset complete"
+msgstr "Нууц үг шинэчилж дууслаа"
+
+msgid "Password change"
+msgstr "Нууц үг солих"
+
+msgid "Password change successful"
+msgstr "Нууц үг амжилттай солилоо"

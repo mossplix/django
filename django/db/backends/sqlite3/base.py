@@ -1,283 +1,130 @@
 """
-SQLite3 backend for django.
-
-Works with either the pysqlite2 module or the sqlite3 module in the
-standard library.
+SQLite backend for the sqlite3 module in the standard library.
 """
-from __future__ import unicode_literals
-
 import datetime
 import decimal
-import warnings
+import functools
+import hashlib
+import math
+import operator
 import re
+import statistics
+import warnings
+from itertools import chain
+from sqlite3 import dbapi2 as Database
 
-from django.db import utils
-from django.db.backends import *
-from django.db.backends.sqlite3.client import DatabaseClient
-from django.db.backends.sqlite3.creation import DatabaseCreation
-from django.db.backends.sqlite3.introspection import DatabaseIntrospection
-from django.db.models import fields
-from django.db.models.sql import aggregates
-from django.utils.dateparse import parse_date, parse_datetime, parse_time
-from django.utils.functional import cached_property
-from django.utils.safestring import SafeBytes
-from django.utils import six
+import pytz
+
+from django.core.exceptions import ImproperlyConfigured
+from django.db import IntegrityError
+from django.db.backends import utils as backend_utils
+from django.db.backends.base.base import BaseDatabaseWrapper
 from django.utils import timezone
+from django.utils.asyncio import async_unsafe
+from django.utils.dateparse import parse_datetime, parse_time
+from django.utils.duration import duration_microseconds
+from django.utils.regex_helper import _lazy_re_compile
 
-try:
-    try:
-        from pysqlite2 import dbapi2 as Database
-    except ImportError:
-        from sqlite3 import dbapi2 as Database
-except ImportError as exc:
-    from django.core.exceptions import ImproperlyConfigured
-    raise ImproperlyConfigured("Error loading either pysqlite2 or sqlite3 modules (tried in that order): %s" % exc)
+from .client import DatabaseClient                          # isort:skip
+from .creation import DatabaseCreation                      # isort:skip
+from .features import DatabaseFeatures                      # isort:skip
+from .introspection import DatabaseIntrospection            # isort:skip
+from .operations import DatabaseOperations                  # isort:skip
+from .schema import DatabaseSchemaEditor                    # isort:skip
 
-try:
-    import pytz
-except ImportError:
-    pytz = None
-
-DatabaseError = Database.DatabaseError
-IntegrityError = Database.IntegrityError
-
-def parse_datetime_with_timezone_support(value):
-    dt = parse_datetime(value)
-    # Confirm that dt is naive before overwriting its tzinfo.
-    if dt is not None and settings.USE_TZ and timezone.is_naive(dt):
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
-def adapt_datetime_with_timezone_support(value):
-    # Equivalent to DateTimeField.get_db_prep_value. Used only by raw SQL.
-    if settings.USE_TZ:
-        if timezone.is_naive(value):
-            warnings.warn("SQLite received a naive datetime (%s)"
-                          " while time zone support is active." % value,
-                          RuntimeWarning)
-            default_timezone = timezone.get_default_timezone()
-            value = timezone.make_aware(value, default_timezone)
-        value = value.astimezone(timezone.utc).replace(tzinfo=None)
-    return value.isoformat(str(" "))
 
 def decoder(conv_func):
-    """ The Python sqlite3 interface returns always byte strings.
-        This function converts the received value to a regular string before
-        passing it to the receiver function.
     """
-    return lambda s: conv_func(s.decode('utf-8'))
+    Convert bytestrings from Python's sqlite3 interface to a regular string.
+    """
+    return lambda s: conv_func(s.decode())
 
-Database.register_converter(str("bool"), decoder(lambda s: s == '1'))
-Database.register_converter(str("time"), decoder(parse_time))
-Database.register_converter(str("date"), decoder(parse_date))
-Database.register_converter(str("datetime"), decoder(parse_datetime_with_timezone_support))
-Database.register_converter(str("timestamp"), decoder(parse_datetime_with_timezone_support))
-Database.register_converter(str("TIMESTAMP"), decoder(parse_datetime_with_timezone_support))
-Database.register_converter(str("decimal"), decoder(util.typecast_decimal))
 
-Database.register_adapter(datetime.datetime, adapt_datetime_with_timezone_support)
-Database.register_adapter(decimal.Decimal, util.rev_typecast_decimal)
-if Database.version_info >= (2, 4, 1):
-    # Starting in 2.4.1, the str type is not accepted anymore, therefore,
-    # we convert all str objects to Unicode
-    # As registering a adapter for a primitive type causes a small
-    # slow-down, this adapter is only registered for sqlite3 versions
-    # needing it (Python 2.6 and up).
-    Database.register_adapter(str, lambda s: s.decode('utf-8'))
-    Database.register_adapter(SafeBytes, lambda s: s.decode('utf-8'))
+def none_guard(func):
+    """
+    Decorator that returns None if any of the arguments to the decorated
+    function are None. Many SQL functions return NULL if any of their arguments
+    are NULL. This decorator simplifies the implementation of this for the
+    custom functions registered below.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return None if None in args else func(*args, **kwargs)
+    return wrapper
 
-class DatabaseFeatures(BaseDatabaseFeatures):
-    # SQLite cannot handle us only partially reading from a cursor's result set
-    # and then writing the same rows to the database in another cursor. This
-    # setting ensures we always read result sets fully into memory all in one
-    # go.
-    can_use_chunked_reads = False
-    test_db_allows_multiple_connections = False
-    supports_unspecified_pk = True
-    supports_timezones = False
-    supports_1000_query_parameters = False
-    supports_mixed_date_datetime_comparisons = False
-    has_bulk_insert = True
-    can_combine_inserts_with_and_without_auto_increment_pk = False
-    autocommits_when_autocommit_is_off = True
 
-    @cached_property
-    def uses_savepoints(self):
-        return Database.sqlite_version_info >= (3, 6, 8)
+def list_aggregate(function):
+    """
+    Return an aggregate class that accumulates values in a list and applies
+    the provided function to the data.
+    """
+    return type('ListAggregate', (list,), {'finalize': function, 'step': list.append})
 
-    @cached_property
-    def supports_stddev(self):
-        """Confirm support for STDDEV and related stats functions
 
-        SQLite supports STDDEV as an extension package; so
-        connection.ops.check_aggregate_support() can't unilaterally
-        rule out support for STDDEV. We need to manually check
-        whether the call works.
-        """
-        cursor = self.connection.cursor()
-        cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')
-        try:
-            cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')
-            has_support = True
-        except utils.DatabaseError:
-            has_support = False
-        cursor.execute('DROP TABLE STDDEV_TEST')
-        return has_support
+def check_sqlite_version():
+    if Database.sqlite_version_info < (3, 8, 3):
+        raise ImproperlyConfigured('SQLite 3.8.3 or later is required (found %s).' % Database.sqlite_version)
 
-    @cached_property
-    def has_zoneinfo_database(self):
-        return pytz is not None
 
-class DatabaseOperations(BaseDatabaseOperations):
-    def bulk_batch_size(self, fields, objs):
-        """
-        SQLite has a compile-time default (SQLITE_LIMIT_VARIABLE_NUMBER) of
-        999 variables per query.
+check_sqlite_version()
 
-        If there is just single field to insert, then we can hit another
-        limit, SQLITE_MAX_COMPOUND_SELECT which defaults to 500.
-        """
-        limit = 999 if len(fields) > 1 else 500
-        return (limit // len(fields)) if len(fields) > 0 else len(objs)
+Database.register_converter("bool", b'1'.__eq__)
+Database.register_converter("time", decoder(parse_time))
+Database.register_converter("datetime", decoder(parse_datetime))
+Database.register_converter("timestamp", decoder(parse_datetime))
+Database.register_converter("TIMESTAMP", decoder(parse_datetime))
 
-    def check_aggregate_support(self, aggregate):
-        bad_fields = (fields.DateField, fields.DateTimeField, fields.TimeField)
-        bad_aggregates = (aggregates.Sum, aggregates.Avg,
-                          aggregates.Variance, aggregates.StdDev)
-        if (isinstance(aggregate.source, bad_fields) and
-                isinstance(aggregate, bad_aggregates)):
-            raise NotImplementedError(
-                'You cannot use Sum, Avg, StdDev and Variance aggregations '
-                'on date/time fields in sqlite3 '
-                'since date/time is saved as text.')
+Database.register_adapter(decimal.Decimal, str)
 
-    def date_extract_sql(self, lookup_type, field_name):
-        # sqlite doesn't support extract, so we fake it with the user-defined
-        # function django_date_extract that's registered in connect(). Note that
-        # single quotes are used because this is a string (and could otherwise
-        # cause a collision with a field name).
-        return "django_date_extract('%s', %s)" % (lookup_type.lower(), field_name)
-
-    def date_interval_sql(self, sql, connector, timedelta):
-        # It would be more straightforward if we could use the sqlite strftime
-        # function, but it does not allow for keeping six digits of fractional
-        # second information, nor does it allow for formatting date and datetime
-        # values differently. So instead we register our own function that
-        # formats the datetime combined with the delta in a manner suitable
-        # for comparisons.
-        return 'django_format_dtdelta(%s, "%s", "%d", "%d", "%d")' % (sql,
-            connector, timedelta.days, timedelta.seconds, timedelta.microseconds)
-
-    def date_trunc_sql(self, lookup_type, field_name):
-        # sqlite doesn't support DATE_TRUNC, so we fake it with a user-defined
-        # function django_date_trunc that's registered in connect(). Note that
-        # single quotes are used because this is a string (and could otherwise
-        # cause a collision with a field name).
-        return "django_date_trunc('%s', %s)" % (lookup_type.lower(), field_name)
-
-    def datetime_extract_sql(self, lookup_type, field_name, tzname):
-        # Same comment as in date_extract_sql.
-        if settings.USE_TZ:
-            if pytz is None:
-                from django.core.exceptions import ImproperlyConfigured
-                raise ImproperlyConfigured("This query requires pytz, "
-                                           "but it isn't installed.")
-        return "django_datetime_extract('%s', %s, %%s)" % (
-            lookup_type.lower(), field_name), [tzname]
-
-    def datetime_trunc_sql(self, lookup_type, field_name, tzname):
-        # Same comment as in date_trunc_sql.
-        if settings.USE_TZ:
-            if pytz is None:
-                from django.core.exceptions import ImproperlyConfigured
-                raise ImproperlyConfigured("This query requires pytz, "
-                                           "but it isn't installed.")
-        return "django_datetime_trunc('%s', %s, %%s)" % (
-            lookup_type.lower(), field_name), [tzname]
-
-    def drop_foreignkey_sql(self):
-        return ""
-
-    def pk_default_value(self):
-        return "NULL"
-
-    def quote_name(self, name):
-        if name.startswith('"') and name.endswith('"'):
-            return name # Quoting once is enough.
-        return '"%s"' % name
-
-    def no_limit_value(self):
-        return -1
-
-    def sql_flush(self, style, tables, sequences):
-        # NB: The generated SQL below is specific to SQLite
-        # Note: The DELETE FROM... SQL generated below works for SQLite databases
-        # because constraints don't exist
-        sql = ['%s %s %s;' % \
-                (style.SQL_KEYWORD('DELETE'),
-                 style.SQL_KEYWORD('FROM'),
-                 style.SQL_FIELD(self.quote_name(table))
-                 ) for table in tables]
-        # Note: No requirement for reset of auto-incremented indices (cf. other
-        # sql_flush() implementations). Just return SQL at this point
-        return sql
-
-    def value_to_db_datetime(self, value):
-        if value is None:
-            return None
-
-        # SQLite doesn't support tz-aware datetimes
-        if timezone.is_aware(value):
-            if settings.USE_TZ:
-                value = value.astimezone(timezone.utc).replace(tzinfo=None)
-            else:
-                raise ValueError("SQLite backend does not support timezone-aware datetimes when USE_TZ is False.")
-
-        return six.text_type(value)
-
-    def value_to_db_time(self, value):
-        if value is None:
-            return None
-
-        # SQLite doesn't support tz-aware datetimes
-        if timezone.is_aware(value):
-            raise ValueError("SQLite backend does not support timezone-aware times.")
-
-        return six.text_type(value)
-
-    def convert_values(self, value, field):
-        """SQLite returns floats when it should be returning decimals,
-        and gets dates and datetimes wrong.
-        For consistency with other backends, coerce when required.
-        """
-        internal_type = field.get_internal_type()
-        if internal_type == 'DecimalField':
-            return util.typecast_decimal(field.format_number(value))
-        elif internal_type and internal_type.endswith('IntegerField') or internal_type == 'AutoField':
-            return int(value)
-        elif internal_type == 'DateField':
-            return parse_date(value)
-        elif internal_type == 'DateTimeField':
-            return parse_datetime_with_timezone_support(value)
-        elif internal_type == 'TimeField':
-            return parse_time(value)
-
-        # No field, or the field isn't known to be a decimal or integer
-        return value
-
-    def bulk_insert_sql(self, fields, num_values):
-        res = []
-        res.append("SELECT %s" % ", ".join(
-            "%%s AS %s" % self.quote_name(f.column) for f in fields
-        ))
-        res.extend(["UNION ALL SELECT %s" % ", ".join(["%s"] * len(fields))] * (num_values - 1))
-        return " ".join(res)
 
 class DatabaseWrapper(BaseDatabaseWrapper):
     vendor = 'sqlite'
+    display_name = 'SQLite'
+    # SQLite doesn't actually support most of these types, but it "does the right
+    # thing" given more verbose field definitions, so leave them as is so that
+    # schema inspection is more useful.
+    data_types = {
+        'AutoField': 'integer',
+        'BigAutoField': 'integer',
+        'BinaryField': 'BLOB',
+        'BooleanField': 'bool',
+        'CharField': 'varchar(%(max_length)s)',
+        'DateField': 'date',
+        'DateTimeField': 'datetime',
+        'DecimalField': 'decimal',
+        'DurationField': 'bigint',
+        'FileField': 'varchar(%(max_length)s)',
+        'FilePathField': 'varchar(%(max_length)s)',
+        'FloatField': 'real',
+        'IntegerField': 'integer',
+        'BigIntegerField': 'bigint',
+        'IPAddressField': 'char(15)',
+        'GenericIPAddressField': 'char(39)',
+        'NullBooleanField': 'bool',
+        'OneToOneField': 'integer',
+        'PositiveBigIntegerField': 'bigint unsigned',
+        'PositiveIntegerField': 'integer unsigned',
+        'PositiveSmallIntegerField': 'smallint unsigned',
+        'SlugField': 'varchar(%(max_length)s)',
+        'SmallAutoField': 'integer',
+        'SmallIntegerField': 'smallint',
+        'TextField': 'text',
+        'TimeField': 'time',
+        'UUIDField': 'char(32)',
+    }
+    data_type_check_constraints = {
+        'PositiveBigIntegerField': '"%(column)s" >= 0',
+        'PositiveIntegerField': '"%(column)s" >= 0',
+        'PositiveSmallIntegerField': '"%(column)s" >= 0',
+    }
+    data_types_suffix = {
+        'AutoField': 'AUTOINCREMENT',
+        'BigAutoField': 'AUTOINCREMENT',
+        'SmallAutoField': 'AUTOINCREMENT',
+    }
     # SQLite requires LIKE statements to include an ESCAPE clause if the value
     # being escaped has a percent or underscore in it.
-    # See http://www.sqlite.org/lang_expr.html for an explanation.
+    # See https://www.sqlite.org/lang_expr.html for an explanation.
     operators = {
         'exact': '= %s',
         'iexact': "LIKE %s ESCAPE '\\'",
@@ -295,30 +142,46 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'iendswith': "LIKE %s ESCAPE '\\'",
     }
 
+    # The patterns below are used to generate SQL pattern lookup clauses when
+    # the right-hand side of the lookup isn't a raw string (it might be an expression
+    # or the result of a bilateral transformation).
+    # In those cases, special characters for LIKE operators (e.g. \, *, _) should be
+    # escaped on database side.
+    #
+    # Note: we use str.format() here for readability as '%' is used as a wildcard for
+    # the LIKE operator.
+    pattern_esc = r"REPLACE(REPLACE(REPLACE({}, '\', '\\'), '%%', '\%%'), '_', '\_')"
+    pattern_ops = {
+        'contains': r"LIKE '%%' || {} || '%%' ESCAPE '\'",
+        'icontains': r"LIKE '%%' || UPPER({}) || '%%' ESCAPE '\'",
+        'startswith': r"LIKE {} || '%%' ESCAPE '\'",
+        'istartswith': r"LIKE UPPER({}) || '%%' ESCAPE '\'",
+        'endswith': r"LIKE '%%' || {} ESCAPE '\'",
+        'iendswith': r"LIKE '%%' || UPPER({}) ESCAPE '\'",
+    }
+
     Database = Database
-
-    def __init__(self, *args, **kwargs):
-        super(DatabaseWrapper, self).__init__(*args, **kwargs)
-
-        self.features = DatabaseFeatures(self)
-        self.ops = DatabaseOperations(self)
-        self.client = DatabaseClient(self)
-        self.creation = DatabaseCreation(self)
-        self.introspection = DatabaseIntrospection(self)
-        self.validation = BaseDatabaseValidation(self)
+    SchemaEditorClass = DatabaseSchemaEditor
+    # Classes instantiated in __init__().
+    client_class = DatabaseClient
+    creation_class = DatabaseCreation
+    features_class = DatabaseFeatures
+    introspection_class = DatabaseIntrospection
+    ops_class = DatabaseOperations
 
     def get_connection_params(self):
         settings_dict = self.settings_dict
         if not settings_dict['NAME']:
-            from django.core.exceptions import ImproperlyConfigured
             raise ImproperlyConfigured(
                 "settings.DATABASES is improperly configured. "
                 "Please supply the NAME value.")
         kwargs = {
-            'database': settings_dict['NAME'],
+            # TODO: Remove str() when dropping support for PY36.
+            # https://bugs.python.org/issue33496
+            'database': str(settings_dict['NAME']),
             'detect_types': Database.PARSE_DECLTYPES | Database.PARSE_COLNAMES,
+            **settings_dict['OPTIONS'],
         }
-        kwargs.update(settings_dict['OPTIONS'])
         # Always allow the underlying SQLite connection to be shareable
         # between multiple threads. The safe-guarding will be handled at a
         # higher level by the `BaseDatabaseWrapper.allow_thread_sharing`
@@ -328,43 +191,86 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         if 'check_same_thread' in kwargs and kwargs['check_same_thread']:
             warnings.warn(
                 'The `check_same_thread` option was provided and set to '
-                'True. It will be overriden with False. Use the '
+                'True. It will be overridden with False. Use the '
                 '`DatabaseWrapper.allow_thread_sharing` property instead '
                 'for controlling thread shareability.',
                 RuntimeWarning
             )
-        kwargs.update({'check_same_thread': False})
+        kwargs.update({'check_same_thread': False, 'uri': True})
         return kwargs
 
+    @async_unsafe
     def get_new_connection(self, conn_params):
         conn = Database.connect(**conn_params)
-        conn.create_function("django_date_extract", 2, _sqlite_date_extract)
+        conn.create_function("django_date_extract", 2, _sqlite_datetime_extract)
         conn.create_function("django_date_trunc", 2, _sqlite_date_trunc)
-        conn.create_function("django_datetime_extract", 3, _sqlite_datetime_extract)
-        conn.create_function("django_datetime_trunc", 3, _sqlite_datetime_trunc)
-        conn.create_function("regexp", 2, _sqlite_regexp)
-        conn.create_function("django_format_dtdelta", 5, _sqlite_format_dtdelta)
+        conn.create_function('django_datetime_cast_date', 3, _sqlite_datetime_cast_date)
+        conn.create_function('django_datetime_cast_time', 3, _sqlite_datetime_cast_time)
+        conn.create_function('django_datetime_extract', 4, _sqlite_datetime_extract)
+        conn.create_function('django_datetime_trunc', 4, _sqlite_datetime_trunc)
+        conn.create_function("django_time_extract", 2, _sqlite_time_extract)
+        conn.create_function("django_time_trunc", 2, _sqlite_time_trunc)
+        conn.create_function("django_time_diff", 2, _sqlite_time_diff)
+        conn.create_function("django_timestamp_diff", 2, _sqlite_timestamp_diff)
+        conn.create_function("django_format_dtdelta", 3, _sqlite_format_dtdelta)
+        conn.create_function('regexp', 2, _sqlite_regexp)
+        conn.create_function('ACOS', 1, none_guard(math.acos))
+        conn.create_function('ASIN', 1, none_guard(math.asin))
+        conn.create_function('ATAN', 1, none_guard(math.atan))
+        conn.create_function('ATAN2', 2, none_guard(math.atan2))
+        conn.create_function('CEILING', 1, none_guard(math.ceil))
+        conn.create_function('COS', 1, none_guard(math.cos))
+        conn.create_function('COT', 1, none_guard(lambda x: 1 / math.tan(x)))
+        conn.create_function('DEGREES', 1, none_guard(math.degrees))
+        conn.create_function('EXP', 1, none_guard(math.exp))
+        conn.create_function('FLOOR', 1, none_guard(math.floor))
+        conn.create_function('LN', 1, none_guard(math.log))
+        conn.create_function('LOG', 2, none_guard(lambda x, y: math.log(y, x)))
+        conn.create_function('LPAD', 3, _sqlite_lpad)
+        conn.create_function('MD5', 1, none_guard(lambda x: hashlib.md5(x.encode()).hexdigest()))
+        conn.create_function('MOD', 2, none_guard(math.fmod))
+        conn.create_function('PI', 0, lambda: math.pi)
+        conn.create_function('POWER', 2, none_guard(operator.pow))
+        conn.create_function('RADIANS', 1, none_guard(math.radians))
+        conn.create_function('REPEAT', 2, none_guard(operator.mul))
+        conn.create_function('REVERSE', 1, none_guard(lambda x: x[::-1]))
+        conn.create_function('RPAD', 3, _sqlite_rpad)
+        conn.create_function('SHA1', 1, none_guard(lambda x: hashlib.sha1(x.encode()).hexdigest()))
+        conn.create_function('SHA224', 1, none_guard(lambda x: hashlib.sha224(x.encode()).hexdigest()))
+        conn.create_function('SHA256', 1, none_guard(lambda x: hashlib.sha256(x.encode()).hexdigest()))
+        conn.create_function('SHA384', 1, none_guard(lambda x: hashlib.sha384(x.encode()).hexdigest()))
+        conn.create_function('SHA512', 1, none_guard(lambda x: hashlib.sha512(x.encode()).hexdigest()))
+        conn.create_function('SIGN', 1, none_guard(lambda x: (x > 0) - (x < 0)))
+        conn.create_function('SIN', 1, none_guard(math.sin))
+        conn.create_function('SQRT', 1, none_guard(math.sqrt))
+        conn.create_function('TAN', 1, none_guard(math.tan))
+        conn.create_aggregate('STDDEV_POP', 1, list_aggregate(statistics.pstdev))
+        conn.create_aggregate('STDDEV_SAMP', 1, list_aggregate(statistics.stdev))
+        conn.create_aggregate('VAR_POP', 1, list_aggregate(statistics.pvariance))
+        conn.create_aggregate('VAR_SAMP', 1, list_aggregate(statistics.variance))
+        conn.execute('PRAGMA foreign_keys = ON')
         return conn
 
     def init_connection_state(self):
         pass
 
-    def create_cursor(self):
+    def create_cursor(self, name=None):
         return self.connection.cursor(factory=SQLiteCursorWrapper)
 
+    @async_unsafe
     def close(self):
         self.validate_thread_sharing()
         # If database is in memory, closing the connection destroys the
         # database. To prevent accidental data loss, ignore close requests on
         # an in-memory db.
-        if self.settings_dict['NAME'] != ":memory:":
+        if not self.is_in_memory_db():
             BaseDatabaseWrapper.close(self)
 
     def _savepoint_allowed(self):
         # When 'isolation_level' is not None, sqlite3 commits before each
         # savepoint; it's a bug. When it is None, savepoints don't make sense
-        # because autocommit is enabled. The only exception is inside atomic
-        # blocks. To work around that bug, on SQLite, atomic starts a
+        # because autocommit is enabled. The only exception is inside 'atomic'
+        # blocks. To work around that bug, on SQLite, 'atomic' starts a
         # transaction explicitly rather than simply disable autocommit.
         return self.in_atomic_block
 
@@ -377,41 +283,92 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             level = ''
         # 'isolation_level' is a misleading API.
         # SQLite always runs at the SERIALIZABLE isolation level.
-        self.connection.isolation_level = level
+        with self.wrap_database_errors:
+            self.connection.isolation_level = level
+
+    def disable_constraint_checking(self):
+        with self.cursor() as cursor:
+            cursor.execute('PRAGMA foreign_keys = OFF')
+            # Foreign key constraints cannot be turned off while in a multi-
+            # statement transaction. Fetch the current state of the pragma
+            # to determine if constraints are effectively disabled.
+            enabled = cursor.execute('PRAGMA foreign_keys').fetchone()[0]
+        return not bool(enabled)
+
+    def enable_constraint_checking(self):
+        with self.cursor() as cursor:
+            cursor.execute('PRAGMA foreign_keys = ON')
 
     def check_constraints(self, table_names=None):
         """
-        Checks each table name in `table_names` for rows with invalid foreign key references. This method is
-        intended to be used in conjunction with `disable_constraint_checking()` and `enable_constraint_checking()`, to
-        determine if rows with invalid references were entered while constraint checks were off.
-
-        Raises an IntegrityError on the first invalid foreign key reference encountered (if any) and provides
-        detailed information about the invalid reference in the error message.
-
-        Backends can override this method if they can more directly apply constraint checking (e.g. via "SET CONSTRAINTS
-        ALL IMMEDIATE")
+        Check each table name in `table_names` for rows with invalid foreign
+        key references. This method is intended to be used in conjunction with
+        `disable_constraint_checking()` and `enable_constraint_checking()`, to
+        determine if rows with invalid references were entered while constraint
+        checks were off.
         """
-        cursor = self.cursor()
-        if table_names is None:
-            table_names = self.introspection.table_names(cursor)
-        for table_name in table_names:
-            primary_key_column_name = self.introspection.get_primary_key_column(cursor, table_name)
-            if not primary_key_column_name:
-                continue
-            key_columns = self.introspection.get_key_columns(cursor, table_name)
-            for column_name, referenced_table_name, referenced_column_name in key_columns:
-                cursor.execute("""
-                    SELECT REFERRING.`%s`, REFERRING.`%s` FROM `%s` as REFERRING
-                    LEFT JOIN `%s` as REFERRED
-                    ON (REFERRING.`%s` = REFERRED.`%s`)
-                    WHERE REFERRING.`%s` IS NOT NULL AND REFERRED.`%s` IS NULL"""
-                    % (primary_key_column_name, column_name, table_name, referenced_table_name,
-                    column_name, referenced_column_name, column_name, referenced_column_name))
-                for bad_row in cursor.fetchall():
-                    raise utils.IntegrityError("The row in table '%s' with primary key '%s' has an invalid "
-                        "foreign key: %s.%s contains a value '%s' that does not have a corresponding value in %s.%s."
-                        % (table_name, bad_row[0], table_name, column_name, bad_row[1],
-                        referenced_table_name, referenced_column_name))
+        if self.features.supports_pragma_foreign_key_check:
+            with self.cursor() as cursor:
+                if table_names is None:
+                    violations = cursor.execute('PRAGMA foreign_key_check').fetchall()
+                else:
+                    violations = chain.from_iterable(
+                        cursor.execute('PRAGMA foreign_key_check(%s)' % table_name).fetchall()
+                        for table_name in table_names
+                    )
+                # See https://www.sqlite.org/pragma.html#pragma_foreign_key_check
+                for table_name, rowid, referenced_table_name, foreign_key_index in violations:
+                    foreign_key = cursor.execute(
+                        'PRAGMA foreign_key_list(%s)' % table_name
+                    ).fetchall()[foreign_key_index]
+                    column_name, referenced_column_name = foreign_key[3:5]
+                    primary_key_column_name = self.introspection.get_primary_key_column(cursor, table_name)
+                    primary_key_value, bad_value = cursor.execute(
+                        'SELECT %s, %s FROM %s WHERE rowid = %%s' % (
+                            primary_key_column_name, column_name, table_name
+                        ),
+                        (rowid,),
+                    ).fetchone()
+                    raise IntegrityError(
+                        "The row in table '%s' with primary key '%s' has an "
+                        "invalid foreign key: %s.%s contains a value '%s' that "
+                        "does not have a corresponding value in %s.%s." % (
+                            table_name, primary_key_value, table_name, column_name,
+                            bad_value, referenced_table_name, referenced_column_name
+                        )
+                    )
+        else:
+            with self.cursor() as cursor:
+                if table_names is None:
+                    table_names = self.introspection.table_names(cursor)
+                for table_name in table_names:
+                    primary_key_column_name = self.introspection.get_primary_key_column(cursor, table_name)
+                    if not primary_key_column_name:
+                        continue
+                    key_columns = self.introspection.get_key_columns(cursor, table_name)
+                    for column_name, referenced_table_name, referenced_column_name in key_columns:
+                        cursor.execute(
+                            """
+                            SELECT REFERRING.`%s`, REFERRING.`%s` FROM `%s` as REFERRING
+                            LEFT JOIN `%s` as REFERRED
+                            ON (REFERRING.`%s` = REFERRED.`%s`)
+                            WHERE REFERRING.`%s` IS NOT NULL AND REFERRED.`%s` IS NULL
+                            """
+                            % (
+                                primary_key_column_name, column_name, table_name,
+                                referenced_table_name, column_name, referenced_column_name,
+                                column_name, referenced_column_name,
+                            )
+                        )
+                        for bad_row in cursor.fetchall():
+                            raise IntegrityError(
+                                "The row in table '%s' with primary key '%s' has an "
+                                "invalid foreign key: %s.%s contains a value '%s' that "
+                                "does not have a corresponding value in %s.%s." % (
+                                    table_name, bad_row[0], table_name, column_name,
+                                    bad_row[1], referenced_table_name, referenced_column_name,
+                                )
+                            )
 
     def is_usable(self):
         return True
@@ -425,7 +382,12 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         """
         self.cursor().execute("BEGIN")
 
-FORMAT_QMARK_REGEX = re.compile(r'(?<!%)%s')
+    def is_in_memory_db(self):
+        return self.creation.is_in_memory_db(self.settings_dict['NAME'])
+
+
+FORMAT_QMARK_REGEX = _lazy_re_compile(r'(?<!%)%s')
+
 
 class SQLiteCursorWrapper(Database.Cursor):
     """
@@ -446,55 +408,108 @@ class SQLiteCursorWrapper(Database.Cursor):
     def convert_query(self, query):
         return FORMAT_QMARK_REGEX.sub('?', query).replace('%%', '%')
 
-def _sqlite_date_extract(lookup_type, dt):
+
+def _sqlite_datetime_parse(dt, tzname=None, conn_tzname=None):
     if dt is None:
         return None
     try:
-        dt = util.typecast_timestamp(dt)
-    except (ValueError, TypeError):
+        dt = backend_utils.typecast_timestamp(dt)
+    except (TypeError, ValueError):
         return None
-    if lookup_type == 'week_day':
-        return (dt.isoweekday() % 7) + 1
-    else:
-        return getattr(dt, lookup_type)
+    if conn_tzname:
+        dt = dt.replace(tzinfo=pytz.timezone(conn_tzname))
+    if tzname is not None and tzname != conn_tzname:
+        sign_index = tzname.find('+') + tzname.find('-') + 1
+        if sign_index > -1:
+            sign = tzname[sign_index]
+            tzname, offset = tzname.split(sign)
+            if offset:
+                hours, minutes = offset.split(':')
+                offset_delta = datetime.timedelta(hours=int(hours), minutes=int(minutes))
+                dt += offset_delta if sign == '+' else -offset_delta
+        dt = timezone.localtime(dt, pytz.timezone(tzname))
+    return dt
+
 
 def _sqlite_date_trunc(lookup_type, dt):
-    try:
-        dt = util.typecast_timestamp(dt)
-    except (ValueError, TypeError):
+    dt = _sqlite_datetime_parse(dt)
+    if dt is None:
         return None
     if lookup_type == 'year':
         return "%i-01-01" % dt.year
+    elif lookup_type == 'quarter':
+        month_in_quarter = dt.month - (dt.month - 1) % 3
+        return '%i-%02i-01' % (dt.year, month_in_quarter)
     elif lookup_type == 'month':
         return "%i-%02i-01" % (dt.year, dt.month)
+    elif lookup_type == 'week':
+        dt = dt - datetime.timedelta(days=dt.weekday())
+        return "%i-%02i-%02i" % (dt.year, dt.month, dt.day)
     elif lookup_type == 'day':
         return "%i-%02i-%02i" % (dt.year, dt.month, dt.day)
 
-def _sqlite_datetime_extract(lookup_type, dt, tzname):
+
+def _sqlite_time_trunc(lookup_type, dt):
     if dt is None:
         return None
     try:
-        dt = util.typecast_timestamp(dt)
+        dt = backend_utils.typecast_time(dt)
     except (ValueError, TypeError):
         return None
-    if tzname is not None:
-        dt = timezone.localtime(dt, pytz.timezone(tzname))
+    if lookup_type == 'hour':
+        return "%02i:00:00" % dt.hour
+    elif lookup_type == 'minute':
+        return "%02i:%02i:00" % (dt.hour, dt.minute)
+    elif lookup_type == 'second':
+        return "%02i:%02i:%02i" % (dt.hour, dt.minute, dt.second)
+
+
+def _sqlite_datetime_cast_date(dt, tzname, conn_tzname):
+    dt = _sqlite_datetime_parse(dt, tzname, conn_tzname)
+    if dt is None:
+        return None
+    return dt.date().isoformat()
+
+
+def _sqlite_datetime_cast_time(dt, tzname, conn_tzname):
+    dt = _sqlite_datetime_parse(dt, tzname, conn_tzname)
+    if dt is None:
+        return None
+    return dt.time().isoformat()
+
+
+def _sqlite_datetime_extract(lookup_type, dt, tzname=None, conn_tzname=None):
+    dt = _sqlite_datetime_parse(dt, tzname, conn_tzname)
+    if dt is None:
+        return None
     if lookup_type == 'week_day':
         return (dt.isoweekday() % 7) + 1
+    elif lookup_type == 'iso_week_day':
+        return dt.isoweekday()
+    elif lookup_type == 'week':
+        return dt.isocalendar()[1]
+    elif lookup_type == 'quarter':
+        return math.ceil(dt.month / 3)
+    elif lookup_type == 'iso_year':
+        return dt.isocalendar()[0]
     else:
         return getattr(dt, lookup_type)
 
-def _sqlite_datetime_trunc(lookup_type, dt, tzname):
-    try:
-        dt = util.typecast_timestamp(dt)
-    except (ValueError, TypeError):
+
+def _sqlite_datetime_trunc(lookup_type, dt, tzname, conn_tzname):
+    dt = _sqlite_datetime_parse(dt, tzname, conn_tzname)
+    if dt is None:
         return None
-    if tzname is not None:
-        dt = timezone.localtime(dt, pytz.timezone(tzname))
     if lookup_type == 'year':
         return "%i-01-01 00:00:00" % dt.year
+    elif lookup_type == 'quarter':
+        month_in_quarter = dt.month - (dt.month - 1) % 3
+        return '%i-%02i-01 00:00:00' % (dt.year, month_in_quarter)
     elif lookup_type == 'month':
         return "%i-%02i-01 00:00:00" % (dt.year, dt.month)
+    elif lookup_type == 'week':
+        dt = dt - datetime.timedelta(days=dt.weekday())
+        return "%i-%02i-%02i 00:00:00" % (dt.year, dt.month, dt.day)
     elif lookup_type == 'day':
         return "%i-%02i-%02i 00:00:00" % (dt.year, dt.month, dt.day)
     elif lookup_type == 'hour':
@@ -504,19 +519,73 @@ def _sqlite_datetime_trunc(lookup_type, dt, tzname):
     elif lookup_type == 'second':
         return "%i-%02i-%02i %02i:%02i:%02i" % (dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 
-def _sqlite_format_dtdelta(dt, conn, days, secs, usecs):
+
+def _sqlite_time_extract(lookup_type, dt):
+    if dt is None:
+        return None
     try:
-        dt = util.typecast_timestamp(dt)
-        delta = datetime.timedelta(int(days), int(secs), int(usecs))
+        dt = backend_utils.typecast_time(dt)
+    except (ValueError, TypeError):
+        return None
+    return getattr(dt, lookup_type)
+
+
+@none_guard
+def _sqlite_format_dtdelta(conn, lhs, rhs):
+    """
+    LHS and RHS can be either:
+    - An integer number of microseconds
+    - A string representing a datetime
+    """
+    try:
+        real_lhs = datetime.timedelta(0, 0, lhs) if isinstance(lhs, int) else backend_utils.typecast_timestamp(lhs)
+        real_rhs = datetime.timedelta(0, 0, rhs) if isinstance(rhs, int) else backend_utils.typecast_timestamp(rhs)
         if conn.strip() == '+':
-            dt = dt + delta
+            out = real_lhs + real_rhs
         else:
-            dt = dt - delta
+            out = real_lhs - real_rhs
     except (ValueError, TypeError):
         return None
     # typecast_timestamp returns a date or a datetime without timezone.
     # It will be formatted as "%Y-%m-%d" or "%Y-%m-%d %H:%M:%S[.%f]"
-    return str(dt)
+    return str(out)
 
+
+@none_guard
+def _sqlite_time_diff(lhs, rhs):
+    left = backend_utils.typecast_time(lhs)
+    right = backend_utils.typecast_time(rhs)
+    return (
+        (left.hour * 60 * 60 * 1000000) +
+        (left.minute * 60 * 1000000) +
+        (left.second * 1000000) +
+        (left.microsecond) -
+        (right.hour * 60 * 60 * 1000000) -
+        (right.minute * 60 * 1000000) -
+        (right.second * 1000000) -
+        (right.microsecond)
+    )
+
+
+@none_guard
+def _sqlite_timestamp_diff(lhs, rhs):
+    left = backend_utils.typecast_timestamp(lhs)
+    right = backend_utils.typecast_timestamp(rhs)
+    return duration_microseconds(left - right)
+
+
+@none_guard
 def _sqlite_regexp(re_pattern, re_string):
-    return bool(re.search(re_pattern, re_string))
+    return bool(re.search(re_pattern, str(re_string)))
+
+
+@none_guard
+def _sqlite_lpad(text, length, fill_text):
+    if len(text) >= length:
+        return text[:length]
+    return (fill_text * length)[:length - len(text)] + text
+
+
+@none_guard
+def _sqlite_rpad(text, length, fill_text):
+    return (text + fill_text * length)[:length]

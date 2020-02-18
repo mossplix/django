@@ -1,7 +1,11 @@
-from django.conf.urls import patterns
+from django.urls import path, re_path
 
-urlpatterns = patterns('',
-    (r'^noslash$', 'view'),
-    (r'^slash/$', 'view'),
-    (r'^needsquoting#/$', 'view'),
-)
+from . import views
+
+urlpatterns = [
+    path('noslash', views.empty_view),
+    path('slash/', views.empty_view),
+    path('needsquoting#/', views.empty_view),
+    # Accepts paths with two leading slashes.
+    re_path(r'^(.+)/security/$', views.empty_view),
+]

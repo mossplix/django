@@ -1,12 +1,10 @@
-from __future__ import unicode_literals
-
-from django.contrib.contenttypes import generic
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation,
+)
 from django.contrib.contenttypes.models import ContentType
-from django.db import models, connection
-from django.utils.encoding import python_2_unicode_compatible
+from django.db import models
 
 
-@python_2_unicode_compatible
 class Square(models.Model):
     root = models.IntegerField()
     square = models.PositiveIntegerField()
@@ -15,7 +13,6 @@ class Square(models.Model):
         return "%s ** 2 == %s" % (self.root, self.square)
 
 
-@python_2_unicode_compatible
 class Person(models.Model):
     first_name = models.CharField(max_length=20)
     last_name = models.CharField(max_length=20)
@@ -29,56 +26,57 @@ class SchoolClass(models.Model):
     day = models.CharField(max_length=9, blank=True)
     last_updated = models.DateTimeField()
 
-# Unfortunately, the following model breaks MySQL hard.
-# Until #13711 is fixed, this test can't be run under MySQL.
-if connection.features.supports_long_model_names:
-    class VeryLongModelNameZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ(models.Model):
-        class Meta:
-            # We need to use a short actual table name or
-            # we hit issue #8548 which we're not testing!
-            verbose_name = 'model_with_long_table_name'
-        primary_key_is_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz = models.AutoField(primary_key=True)
-        charfield_is_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz = models.CharField(max_length=100)
-        m2m_also_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz = models.ManyToManyField(Person, blank=True)
+
+class VeryLongModelNameZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ(models.Model):
+    primary_key_is_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz = models.AutoField(primary_key=True)
+    charfield_is_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz = models.CharField(max_length=100)
+    m2m_also_quite_long_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz = models.ManyToManyField(Person, blank=True)
 
 
 class Tag(models.Model):
     name = models.CharField(max_length=30)
-    content_type = models.ForeignKey(ContentType, related_name='backend_tags')
+    content_type = models.ForeignKey(ContentType, models.CASCADE, related_name='backend_tags')
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey('content_type', 'object_id')
+    content_object = GenericForeignKey('content_type', 'object_id')
 
 
 class Post(models.Model):
     name = models.CharField(max_length=30)
     text = models.TextField()
-    tags = generic.GenericRelation('Tag')
+    tags = GenericRelation('Tag')
 
     class Meta:
         db_table = 'CaseSensitive_Post'
 
 
-@python_2_unicode_compatible
 class Reporter(models.Model):
     first_name = models.CharField(max_length=30)
     last_name = models.CharField(max_length=30)
-    raw_data = models.BinaryField()
 
     def __str__(self):
         return "%s %s" % (self.first_name, self.last_name)
 
 
-@python_2_unicode_compatible
+class ReporterProxy(Reporter):
+    class Meta:
+        proxy = True
+
+
 class Article(models.Model):
     headline = models.CharField(max_length=100)
     pub_date = models.DateField()
-    reporter = models.ForeignKey(Reporter)
+    reporter = models.ForeignKey(Reporter, models.CASCADE)
+    reporter_proxy = models.ForeignKey(
+        ReporterProxy,
+        models.SET_NULL,
+        null=True,
+        related_name='reporter_proxy',
+    )
 
     def __str__(self):
         return self.headline
 
 
-@python_2_unicode_compatible
 class Item(models.Model):
     name = models.CharField(max_length=30)
     date = models.DateField()
@@ -89,17 +87,28 @@ class Item(models.Model):
         return self.name
 
 
-@python_2_unicode_compatible
 class Object(models.Model):
     related_objects = models.ManyToManyField("self", db_constraint=False, symmetrical=False)
+    obj_ref = models.ForeignKey('ObjectReference', models.CASCADE, null=True)
 
     def __str__(self):
         return str(self.id)
 
 
-@python_2_unicode_compatible
 class ObjectReference(models.Model):
-    obj = models.ForeignKey(Object, db_constraint=False)
+    obj = models.ForeignKey(Object, models.CASCADE, db_constraint=False)
 
     def __str__(self):
         return str(self.obj_id)
+
+
+class RawData(models.Model):
+    raw_data = models.BinaryField()
+
+
+class Author(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+
+
+class Book(models.Model):
+    author = models.ForeignKey(Author, models.CASCADE, to_field='name')

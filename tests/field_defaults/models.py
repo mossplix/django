@@ -1,6 +1,5 @@
-# coding: utf-8
 """
-32. Callable defaults
+Callable defaults
 
 You can pass callable objects as the ``default`` parameter to a field. When
 the object is created without an explicit value passed in, Django will call
@@ -13,10 +12,8 @@ field.
 from datetime import datetime
 
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 
-@python_2_unicode_compatible
 class Article(models.Model):
     headline = models.CharField(max_length=100, default='Default headline')
     pub_date = models.DateTimeField(default=datetime.now)

@@ -1,10 +1,7 @@
-from __future__ import absolute_import
+from django.urls import path
 
-from django.conf.urls import patterns, include
+from . import widgetadmin
 
-from . import  widgetadmin
-
-
-urlpatterns = patterns('',
-    (r'^', include(widgetadmin.site.urls)),
-)
+urlpatterns = [
+    path('', widgetadmin.site.urls),
+]

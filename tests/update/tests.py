@@ -1,21 +1,23 @@
-from __future__ import absolute_import, unicode_literals
-
+from django.core.exceptions import FieldError
+from django.db.models import Count, F, Max
+from django.db.models.functions import Concat, Lower
 from django.test import TestCase
 
-from .models import A, B, C, D, DataPoint, RelatedPoint
+from .models import A, B, Bar, D, DataPoint, Foo, RelatedPoint
 
 
 class SimpleTest(TestCase):
-    def setUp(self):
-        self.a1 = A.objects.create()
-        self.a2 = A.objects.create()
+    @classmethod
+    def setUpTestData(cls):
+        cls.a1 = A.objects.create()
+        cls.a2 = A.objects.create()
         for x in range(20):
-            B.objects.create(a=self.a1)
-            D.objects.create(a=self.a1)
+            B.objects.create(a=cls.a1)
+            D.objects.create(a=cls.a1)
 
     def test_nonempty_update(self):
         """
-        Test that update changes the right number of rows for a nonempty queryset
+        Update changes the right number of rows for a nonempty queryset
         """
         num_updated = self.a1.b_set.update(y=100)
         self.assertEqual(num_updated, 20)
@@ -24,7 +26,7 @@ class SimpleTest(TestCase):
 
     def test_empty_update(self):
         """
-        Test that update changes the right number of rows for an empty queryset
+        Update changes the right number of rows for an empty queryset
         """
         num_updated = self.a2.b_set.update(y=100)
         self.assertEqual(num_updated, 0)
@@ -33,7 +35,7 @@ class SimpleTest(TestCase):
 
     def test_nonempty_update_with_inheritance(self):
         """
-        Test that update changes the right number of rows for an empty queryset
+        Update changes the right number of rows for an empty queryset
         when the update affects only a base table
         """
         num_updated = self.a1.d_set.update(y=100)
@@ -43,7 +45,7 @@ class SimpleTest(TestCase):
 
     def test_empty_update_with_inheritance(self):
         """
-        Test that update changes the right number of rows for an empty queryset
+        Update changes the right number of rows for an empty queryset
         when the update affects only a base table
         """
         num_updated = self.a2.d_set.update(y=100)
@@ -51,13 +53,23 @@ class SimpleTest(TestCase):
         cnt = D.objects.filter(y=100).count()
         self.assertEqual(cnt, 0)
 
+    def test_foreign_key_update_with_id(self):
+        """
+        Update works using <field>_id for foreign keys
+        """
+        num_updated = self.a1.d_set.update(a_id=self.a2)
+        self.assertEqual(num_updated, 20)
+        self.assertEqual(self.a2.d_set.count(), 20)
+
+
 class AdvancedTests(TestCase):
 
-    def setUp(self):
-        self.d0 = DataPoint.objects.create(name="d0", value="apple")
-        self.d2 = DataPoint.objects.create(name="d2", value="banana")
-        self.d3 = DataPoint.objects.create(name="d3", value="banana")
-        self.r1 = RelatedPoint.objects.create(name="r1", data=self.d3)
+    @classmethod
+    def setUpTestData(cls):
+        cls.d0 = DataPoint.objects.create(name="d0", value="apple")
+        cls.d2 = DataPoint.objects.create(name="d2", value="banana")
+        cls.d3 = DataPoint.objects.create(name="d3", value="banana")
+        cls.r1 = RelatedPoint.objects.create(name="r1", data=cls.d3)
 
     def test_update(self):
         """
@@ -74,8 +86,7 @@ class AdvancedTests(TestCase):
         """
         We can update multiple objects at once.
         """
-        resp = DataPoint.objects.filter(value="banana").update(
-            value="pineapple")
+        resp = DataPoint.objects.filter(value='banana').update(value='pineapple')
         self.assertEqual(resp, 2)
         self.assertEqual(DataPoint.objects.get(name="d2").value, 'pineapple')
 
@@ -114,5 +125,77 @@ class AdvancedTests(TestCase):
         We do not support update on already sliced query sets.
         """
         method = DataPoint.objects.all()[:2].update
-        self.assertRaises(AssertionError, method,
-            another_value='another thing')
+        msg = 'Cannot update a query once a slice has been taken.'
+        with self.assertRaisesMessage(AssertionError, msg):
+            method(another_value='another thing')
+
+    def test_update_respects_to_field(self):
+        """
+        Update of an FK field which specifies a to_field works.
+        """
+        a_foo = Foo.objects.create(target='aaa')
+        b_foo = Foo.objects.create(target='bbb')
+        bar = Bar.objects.create(foo=a_foo)
+        self.assertEqual(bar.foo_id, a_foo.target)
+        bar_qs = Bar.objects.filter(pk=bar.pk)
+        self.assertEqual(bar_qs[0].foo_id, a_foo.target)
+        bar_qs.update(foo=b_foo)
+        self.assertEqual(bar_qs[0].foo_id, b_foo.target)
+
+    def test_update_m2m_field(self):
+        msg = (
+            'Cannot update model field '
+            '<django.db.models.fields.related.ManyToManyField: m2m_foo> '
+            '(only non-relations and foreign keys permitted).'
+        )
+        with self.assertRaisesMessage(FieldError, msg):
+            Bar.objects.update(m2m_foo='whatever')
+
+    def test_update_annotated_queryset(self):
+        """
+        Update of a queryset that's been annotated.
+        """
+        # Trivial annotated update
+        qs = DataPoint.objects.annotate(alias=F('value'))
+        self.assertEqual(qs.update(another_value='foo'), 3)
+        # Update where annotation is used for filtering
+        qs = DataPoint.objects.annotate(alias=F('value')).filter(alias='apple')
+        self.assertEqual(qs.update(another_value='foo'), 1)
+        # Update where annotation is used in update parameters
+        qs = DataPoint.objects.annotate(alias=F('value'))
+        self.assertEqual(qs.update(another_value=F('alias')), 3)
+        # Update where aggregation annotation is used in update parameters
+        qs = DataPoint.objects.annotate(max=Max('value'))
+        msg = (
+            'Aggregate functions are not allowed in this query '
+            '(another_value=Max(Col(update_datapoint, update.DataPoint.value))).'
+        )
+        with self.assertRaisesMessage(FieldError, msg):
+            qs.update(another_value=F('max'))
+
+    def test_update_annotated_multi_table_queryset(self):
+        """
+        Update of a queryset that's been annotated and involves multiple tables.
+        """
+        # Trivial annotated update
+        qs = DataPoint.objects.annotate(related_count=Count('relatedpoint'))
+        self.assertEqual(qs.update(value='Foo'), 3)
+        # Update where annotation is used for filtering
+        qs = DataPoint.objects.annotate(related_count=Count('relatedpoint'))
+        self.assertEqual(qs.filter(related_count=1).update(value='Foo'), 1)
+        # Update where aggregation annotation is used in update parameters
+        qs = RelatedPoint.objects.annotate(max=Max('data__value'))
+        msg = 'Joined field references are not permitted in this query'
+        with self.assertRaisesMessage(FieldError, msg):
+            qs.update(name=F('max'))
+
+    def test_update_with_joined_field_annotation(self):
+        msg = 'Joined field references are not permitted in this query'
+        for annotation in (
+            F('data__name'),
+            Lower('data__name'),
+            Concat('data__name', 'data__value'),
+        ):
+            with self.subTest(annotation=annotation):
+                with self.assertRaisesMessage(FieldError, msg):
+                    RelatedPoint.objects.annotate(new_name=annotation).update(name=F('new_name'))

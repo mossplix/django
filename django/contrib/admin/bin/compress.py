@@ -1,47 +1,67 @@
 #!/usr/bin/env python
-import os
-import optparse
+import argparse
 import subprocess
 import sys
+from pathlib import Path
 
-js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'admin', 'js')
+try:
+    import closure
+except ImportError:
+    closure_compiler = None
+else:
+    closure_compiler = closure.get_jar_filename()
+
+js_path = Path(__file__).parents[1] / 'static' / 'admin' / 'js'
+
 
 def main():
-    usage = "usage: %prog [file1..fileN]"
     description = """With no file paths given this script will automatically
 compress all jQuery-based files of the admin app. Requires the Google Closure
 Compiler library and Java version 6 or later."""
-    parser = optparse.OptionParser(usage, description=description)
-    parser.add_option("-c", dest="compiler", default="~/bin/compiler.jar",
-                      help="path to Closure Compiler jar file")
-    parser.add_option("-v", "--verbose",
-                      action="store_true", dest="verbose")
-    parser.add_option("-q", "--quiet",
-                      action="store_false", dest="verbose")
-    (options, args) = parser.parse_args()
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument('file', nargs='*')
+    parser.add_argument(
+        "-c", dest="compiler", default="~/bin/compiler.jar",
+        help="path to Closure Compiler jar file",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", dest="verbose")
+    parser.add_argument("-q", "--quiet", action="store_false", dest="verbose")
+    options = parser.parse_args()
 
-    compiler = os.path.expanduser(options.compiler)
-    if not os.path.exists(compiler):
-        sys.exit("Google Closure compiler jar file %s not found. Please use the -c option to specify the path." % compiler)
+    compiler = Path(closure_compiler or options.compiler).expanduser()
+    if not compiler.exists():
+        sys.exit(
+            "Google Closure compiler jar file %s not found. Please use the -c "
+            "option to specify the path." % compiler
+        )
 
-    if not args:
+    if not options.file:
         if options.verbose:
             sys.stdout.write("No filenames given; defaulting to admin scripts\n")
-        args = [os.path.join(js_path, f) for f in [
-            "actions.js", "collapse.js", "inlines.js", "prepopulate.js"]]
+        files = [
+            js_path / f
+            for f in ["actions.js", "collapse.js", "inlines.js", "prepopulate.js"]
+        ]
+    else:
+        files = [Path(f) for f in options.file]
 
-    for arg in args:
-        if not arg.endswith(".js"):
-            arg = arg + ".js"
-        to_compress = os.path.expanduser(arg)
-        if os.path.exists(to_compress):
-            to_compress_min = "%s.min.js" % "".join(arg.rsplit(".js"))
-            cmd = "java -jar %s --js %s --js_output_file %s" % (compiler, to_compress, to_compress_min)
+    for file_path in files:
+        to_compress = file_path.expanduser()
+        if to_compress.exists():
+            to_compress_min = to_compress.with_suffix('.min.js')
+            cmd = [
+                'java',
+                '-jar', str(compiler),
+                '--rewrite_polyfills=false',
+                '--js', str(to_compress),
+                '--js_output_file', str(to_compress_min),
+            ]
             if options.verbose:
-                sys.stdout.write("Running: %s\n" % cmd)
-            subprocess.call(cmd.split())
+                sys.stdout.write("Running: %s\n" % ' '.join(cmd))
+            subprocess.run(cmd)
         else:
             sys.stdout.write("File %s not found. Sure it exists?\n" % to_compress)
+
 
 if __name__ == '__main__':
     main()

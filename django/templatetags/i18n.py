@@ -1,15 +1,9 @@
-from __future__ import unicode_literals
-import re
-import sys
-
 from django.conf import settings
-from django.template import (Node, Variable, TemplateSyntaxError,
-    TokenParser, Library, TOKEN_TEXT, TOKEN_VAR)
-from django.template.base import render_value_in_context
+from django.template import Library, Node, TemplateSyntaxError, Variable
+from django.template.base import TokenType, render_value_in_context
 from django.template.defaulttags import token_kwargs
-from django.utils import six
 from django.utils import translation
-
+from django.utils.safestring import SafeData, mark_safe
 
 register = Library()
 
@@ -19,7 +13,7 @@ class GetAvailableLanguagesNode(Node):
         self.variable = variable
 
     def render(self, context):
-        context[self.variable] = [(k, translation.ugettext(v)) for k, v in settings.LANGUAGES]
+        context[self.variable] = [(k, translation.gettext(v)) for k, v in settings.LANGUAGES]
         return ''
 
 
@@ -78,7 +72,7 @@ class TranslateNode(Node):
         self.asvar = asvar
         self.message_context = message_context
         self.filter_expression = filter_expression
-        if isinstance(self.filter_expression.var, six.string_types):
+        if isinstance(self.filter_expression.var, str):
             self.filter_expression.var = Variable("'%s'" %
                                                   self.filter_expression.var)
 
@@ -89,6 +83,11 @@ class TranslateNode(Node):
                 self.message_context.resolve(context))
         output = self.filter_expression.resolve(context)
         value = render_value_in_context(output, context)
+        # Restore percent signs. Percent signs in template text are doubled
+        # so they are not interpreted as string format flags.
+        is_safe = isinstance(value, SafeData)
+        value = value.replace('%%', '%')
+        value = mark_safe(value) if is_safe else value
         if self.asvar:
             context[self.asvar] = value
             return ''
@@ -97,37 +96,42 @@ class TranslateNode(Node):
 
 
 class BlockTranslateNode(Node):
+
     def __init__(self, extra_context, singular, plural=None, countervar=None,
-            counter=None, message_context=None):
+                 counter=None, message_context=None, trimmed=False, asvar=None,
+                 tag_name='blocktranslate'):
         self.extra_context = extra_context
         self.singular = singular
         self.plural = plural
         self.countervar = countervar
         self.counter = counter
         self.message_context = message_context
+        self.trimmed = trimmed
+        self.asvar = asvar
+        self.tag_name = tag_name
 
     def render_token_list(self, tokens):
         result = []
         vars = []
         for token in tokens:
-            if token.token_type == TOKEN_TEXT:
+            if token.token_type == TokenType.TEXT:
                 result.append(token.contents.replace('%', '%%'))
-            elif token.token_type == TOKEN_VAR:
+            elif token.token_type == TokenType.VAR:
                 result.append('%%(%s)s' % token.contents)
                 vars.append(token.contents)
-        return ''.join(result), vars
+        msg = ''.join(result)
+        if self.trimmed:
+            msg = translation.trim_whitespace(msg)
+        return msg, vars
 
     def render(self, context, nested=False):
         if self.message_context:
             message_context = self.message_context.resolve(context)
         else:
             message_context = None
-        tmp_context = {}
-        for var, val in self.extra_context.items():
-            tmp_context[var] = val.resolve(context)
         # Update() works like a push(), so corresponding context.pop() is at
         # the end of function
-        context.update(tmp_context)
+        context.update({var: val.resolve(context) for var, val in self.extra_context.items()})
         singular, vars = self.render_token_list(self.singular)
         if self.plural and self.countervar and self.counter:
             count = self.counter.resolve(context)
@@ -137,28 +141,40 @@ class BlockTranslateNode(Node):
                 result = translation.npgettext(message_context, singular,
                                                plural, count)
             else:
-                result = translation.ungettext(singular, plural, count)
+                result = translation.ngettext(singular, plural, count)
             vars.extend(plural_vars)
         else:
             if message_context:
                 result = translation.pgettext(message_context, singular)
             else:
-                result = translation.ugettext(singular)
-        default_value = settings.TEMPLATE_STRING_IF_INVALID
-        render_value = lambda v: render_value_in_context(
-            context.get(v, default_value), context)
-        data = dict([(v, render_value(v)) for v in vars])
+                result = translation.gettext(singular)
+        default_value = context.template.engine.string_if_invalid
+
+        def render_value(key):
+            if key in context:
+                val = context[key]
+            else:
+                val = default_value % key if '%s' in default_value else default_value
+            return render_value_in_context(val, context)
+
+        data = {v: render_value(v) for v in vars}
         context.pop()
         try:
             result = result % data
         except (KeyError, ValueError):
             if nested:
                 # Either string is malformed, or it's a bug
-                raise TemplateSyntaxError("'blocktrans' is unable to format "
-                    "string returned by gettext: %r using %r" % (result, data))
+                raise TemplateSyntaxError(
+                    '%r is unable to format string returned by gettext: %r '
+                    'using %r' % (self.tag_name, result, data)
+                )
             with translation.override(None):
                 result = self.render(context, nested=True)
-        return result
+        if self.asvar:
+            context[self.asvar] = result
+            return ''
+        else:
+            return result
 
 
 class LanguageNode(Node):
@@ -175,8 +191,7 @@ class LanguageNode(Node):
 @register.tag("get_available_languages")
 def do_get_available_languages(parser, token):
     """
-    This will store a list of available languages
-    in the context.
+    Store a list of available languages in the context.
 
     Usage::
 
@@ -185,9 +200,7 @@ def do_get_available_languages(parser, token):
         ...
         {% endfor %}
 
-    This will just pull the LANGUAGES setting from
-    your setting file (or the default settings) and
-    put it into the named variable.
+    This puts settings.LANGUAGES into the named variable.
     """
     # token.split_contents() isn't useful here because this tag doesn't accept variable as arguments
     args = token.contents.split()
@@ -195,17 +208,19 @@ def do_get_available_languages(parser, token):
         raise TemplateSyntaxError("'get_available_languages' requires 'as variable' (got %r)" % args)
     return GetAvailableLanguagesNode(args[2])
 
+
 @register.tag("get_language_info")
 def do_get_language_info(parser, token):
     """
-    This will store the language information dictionary for the given language
-    code in a context variable.
+    Store the language information dictionary for the given language code in a
+    context variable.
 
     Usage::
 
         {% get_language_info for LANGUAGE_CODE as l %}
         {{ l.code }}
         {{ l.name }}
+        {{ l.name_translated }}
         {{ l.name_local }}
         {{ l.bidi|yesno:"bi-directional,uni-directional" }}
     """
@@ -214,13 +229,14 @@ def do_get_language_info(parser, token):
         raise TemplateSyntaxError("'%s' requires 'for string as variable' (got %r)" % (args[0], args[1:]))
     return GetLanguageInfoNode(parser.compile_filter(args[2]), args[4])
 
+
 @register.tag("get_language_info_list")
 def do_get_language_info_list(parser, token):
     """
-    This will store a list of language information dictionaries for the given
-    language codes in a context variable. The language codes can be specified
-    either as a list of strings or a settings.LANGUAGES style tuple (or any
-    sequence of sequences whose first items are language codes).
+    Store a list of language information dictionaries for the given language
+    codes in a context variable. The language codes can be specified either as
+    a list of strings or a settings.LANGUAGES style list (or any sequence of
+    sequences whose first items are language codes).
 
     Usage::
 
@@ -228,6 +244,7 @@ def do_get_language_info_list(parser, token):
         {% for l in langs %}
           {{ l.code }}
           {{ l.name }}
+          {{ l.name_translated }}
           {{ l.name_local }}
           {{ l.bidi|yesno:"bi-directional,uni-directional" }}
         {% endfor %}
@@ -237,30 +254,39 @@ def do_get_language_info_list(parser, token):
         raise TemplateSyntaxError("'%s' requires 'for sequence as variable' (got %r)" % (args[0], args[1:]))
     return GetLanguageInfoListNode(parser.compile_filter(args[2]), args[4])
 
+
 @register.filter
 def language_name(lang_code):
     return translation.get_language_info(lang_code)['name']
+
+
+@register.filter
+def language_name_translated(lang_code):
+    english_name = translation.get_language_info(lang_code)['name']
+    return translation.gettext(english_name)
+
 
 @register.filter
 def language_name_local(lang_code):
     return translation.get_language_info(lang_code)['name_local']
 
+
 @register.filter
 def language_bidi(lang_code):
     return translation.get_language_info(lang_code)['bidi']
 
+
 @register.tag("get_current_language")
 def do_get_current_language(parser, token):
     """
-    This will store the current language in the context.
+    Store the current language in the context.
 
     Usage::
 
         {% get_current_language as language %}
 
-    This will fetch the currently active language and
-    put it's value into the ``language`` context
-    variable.
+    This fetches the currently active language and puts its value into the
+    ``language`` context variable.
     """
     # token.split_contents() isn't useful here because this tag doesn't accept variable as arguments
     args = token.contents.split()
@@ -268,18 +294,19 @@ def do_get_current_language(parser, token):
         raise TemplateSyntaxError("'get_current_language' requires 'as variable' (got %r)" % args)
     return GetCurrentLanguageNode(args[2])
 
+
 @register.tag("get_current_language_bidi")
 def do_get_current_language_bidi(parser, token):
     """
-    This will store the current language layout in the context.
+    Store the current language layout in the context.
 
     Usage::
 
         {% get_current_language_bidi as bidi %}
 
-    This will fetch the currently active language's layout and
-    put it's value into the ``bidi`` context variable.
-    True indicates right-to-left layout, otherwise left-to-right
+    This fetches the currently active language's layout and puts its value into
+    the ``bidi`` context variable. True indicates right-to-left layout,
+    otherwise left-to-right.
     """
     # token.split_contents() isn't useful here because this tag doesn't accept variable as arguments
     args = token.contents.split()
@@ -287,116 +314,140 @@ def do_get_current_language_bidi(parser, token):
         raise TemplateSyntaxError("'get_current_language_bidi' requires 'as variable' (got %r)" % args)
     return GetCurrentLanguageBidiNode(args[2])
 
+
+@register.tag("translate")
 @register.tag("trans")
 def do_translate(parser, token):
     """
-    This will mark a string for translation and will
-    translate the string for the current language.
+    Mark a string for translation and translate the string for the current
+    language.
 
     Usage::
 
-        {% trans "this is a test" %}
+        {% translate "this is a test" %}
 
-    This will mark the string for translation so it will
-    be pulled out by mark-messages.py into the .po files
-    and will run the string through the translation engine.
+    This marks the string for translation so it will be pulled out by
+    makemessages into the .po files and runs the string through the translation
+    engine.
 
     There is a second form::
 
-        {% trans "this is a test" noop %}
+        {% translate "this is a test" noop %}
 
-    This will only mark for translation, but will return
-    the string unchanged. Use it when you need to store
-    values into forms that should be translated later on.
+    This marks the string for translation, but returns the string unchanged.
+    Use it when you need to store values into forms that should be translated
+    later on.
 
     You can use variables instead of constant strings
     to translate stuff you marked somewhere else::
 
-        {% trans variable %}
+        {% translate variable %}
 
-    This will just try to translate the contents of
-    the variable ``variable``. Make sure that the string
-    in there is something that is in the .po file.
+    This tries to translate the contents of the variable ``variable``. Make
+    sure that the string in there is something that is in the .po file.
 
     It is possible to store the translated string into a variable::
 
-        {% trans "this is a test" as var %}
+        {% translate "this is a test" as var %}
         {{ var }}
 
     Contextual translations are also supported::
 
-        {% trans "this is a test" context "greeting" %}
+        {% translate "this is a test" context "greeting" %}
 
     This is equivalent to calling pgettext instead of (u)gettext.
     """
-    class TranslateParser(TokenParser):
-        def top(self):
-            value = self.value()
+    bits = token.split_contents()
+    if len(bits) < 2:
+        raise TemplateSyntaxError("'%s' takes at least one argument" % bits[0])
+    message_string = parser.compile_filter(bits[1])
+    remaining = bits[2:]
 
-            # Backwards Compatiblity fix:
-            # FilterExpression does not support single-quoted strings,
-            # so we make a cheap localized fix in order to maintain
-            # backwards compatibility with existing uses of ``trans``
-            # where single quote use is supported.
-            if value[0] == "'":
-                m = re.match("^'([^']+)'(\|.*$)", value)
-                if m:
-                    value = '"%s"%s' % (m.group(1).replace('"','\\"'), m.group(2))
-                elif value[-1] == "'":
-                    value = '"%s"' % value[1:-1].replace('"','\\"')
+    noop = False
+    asvar = None
+    message_context = None
+    seen = set()
+    invalid_context = {'as', 'noop'}
 
-            noop = False
-            asvar = None
-            message_context = None
+    while remaining:
+        option = remaining.pop(0)
+        if option in seen:
+            raise TemplateSyntaxError(
+                "The '%s' option was specified more than once." % option,
+            )
+        elif option == 'noop':
+            noop = True
+        elif option == 'context':
+            try:
+                value = remaining.pop(0)
+            except IndexError:
+                raise TemplateSyntaxError(
+                    "No argument provided to the '%s' tag for the context option." % bits[0]
+                )
+            if value in invalid_context:
+                raise TemplateSyntaxError(
+                    "Invalid argument '%s' provided to the '%s' tag for the context option" % (value, bits[0]),
+                )
+            message_context = parser.compile_filter(value)
+        elif option == 'as':
+            try:
+                value = remaining.pop(0)
+            except IndexError:
+                raise TemplateSyntaxError(
+                    "No argument provided to the '%s' tag for the as option." % bits[0]
+                )
+            asvar = value
+        else:
+            raise TemplateSyntaxError(
+                "Unknown argument for '%s' tag: '%s'. The only options "
+                "available are 'noop', 'context' \"xxx\", and 'as VAR'." % (
+                    bits[0], option,
+                )
+            )
+        seen.add(option)
 
-            while self.more():
-                tag = self.tag()
-                if tag == 'noop':
-                    noop = True
-                elif tag == 'context':
-                    message_context = parser.compile_filter(self.value())
-                elif tag == 'as':
-                    asvar = self.tag()
-                else:
-                    raise TemplateSyntaxError(
-                        "Only options for 'trans' are 'noop', " \
-                        "'context \"xxx\"', and 'as VAR'.")
-            return value, noop, asvar, message_context
-    value, noop, asvar, message_context = TranslateParser(token.contents).top()
-    return TranslateNode(parser.compile_filter(value), noop, asvar,
-                         message_context)
+    return TranslateNode(message_string, noop, asvar, message_context)
 
+
+@register.tag("blocktranslate")
 @register.tag("blocktrans")
 def do_block_translate(parser, token):
     """
-    This will translate a block of text with parameters.
+    Translate a block of text with parameters.
 
     Usage::
 
-        {% blocktrans with bar=foo|filter boo=baz|filter %}
+        {% blocktranslate with bar=foo|filter boo=baz|filter %}
         This is {{ bar }} and {{ boo }}.
-        {% endblocktrans %}
+        {% endblocktranslate %}
 
     Additionally, this supports pluralization::
 
-        {% blocktrans count count=var|length %}
+        {% blocktranslate count count=var|length %}
         There is {{ count }} object.
         {% plural %}
         There are {{ count }} objects.
-        {% endblocktrans %}
+        {% endblocktranslate %}
 
     This is much like ngettext, only in template syntax.
 
     The "var as value" legacy format is still supported::
 
-        {% blocktrans with foo|filter as bar and baz|filter as boo %}
-        {% blocktrans count var|length as count %}
+        {% blocktranslate with foo|filter as bar and baz|filter as boo %}
+        {% blocktranslate count var|length as count %}
+
+    The translated string can be stored in a variable using `asvar`::
+
+        {% blocktranslate with bar=foo|filter boo=baz|filter asvar var %}
+        This is {{ bar }} and {{ boo }}.
+        {% endblocktranslate %}
+        {{ var }}
 
     Contextual translations are supported::
 
-        {% blocktrans with bar=foo|filter context "greeting" %}
+        {% blocktranslate with bar=foo|filter context "greeting" %}
             This is {{ bar }}.
-        {% endblocktrans %}
+        {% endblocktranslate %}
 
     This is equivalent to calling pgettext/npgettext instead of
     (u)gettext/(u)ngettext.
@@ -405,6 +456,7 @@ def do_block_translate(parser, token):
 
     options = {}
     remaining_bits = bits[1:]
+    asvar = None
     while remaining_bits:
         option = remaining_bits.pop(0)
         if option in options:
@@ -425,17 +477,26 @@ def do_block_translate(parser, token):
                 value = remaining_bits.pop(0)
                 value = parser.compile_filter(value)
             except Exception:
-                msg = (
-                    '"context" in %r tag expected '
-                    'exactly one argument.') % bits[0]
-                six.reraise(TemplateSyntaxError, TemplateSyntaxError(msg), sys.exc_info()[2])
+                raise TemplateSyntaxError(
+                    '"context" in %r tag expected exactly one argument.' % bits[0]
+                )
+        elif option == "trimmed":
+            value = True
+        elif option == "asvar":
+            try:
+                value = remaining_bits.pop(0)
+            except IndexError:
+                raise TemplateSyntaxError(
+                    "No argument provided to the '%s' tag for the asvar option." % bits[0]
+                )
+            asvar = value
         else:
             raise TemplateSyntaxError('Unknown argument for %r tag: %r.' %
                                       (bits[0], option))
         options[option] = value
 
     if 'count' in options:
-        countervar, counter = list(six.iteritems(options['count']))[0]
+        countervar, counter = next(iter(options['count'].items()))
     else:
         countervar, counter = None, None
     if 'context' in options:
@@ -444,40 +505,44 @@ def do_block_translate(parser, token):
         message_context = None
     extra_context = options.get('with', {})
 
+    trimmed = options.get("trimmed", False)
+
     singular = []
     plural = []
     while parser.tokens:
         token = parser.next_token()
-        if token.token_type in (TOKEN_VAR, TOKEN_TEXT):
+        if token.token_type in (TokenType.VAR, TokenType.TEXT):
             singular.append(token)
         else:
             break
     if countervar and counter:
         if token.contents.strip() != 'plural':
-            raise TemplateSyntaxError("'blocktrans' doesn't allow other block tags inside it")
+            raise TemplateSyntaxError("%r doesn't allow other block tags inside it" % bits[0])
         while parser.tokens:
             token = parser.next_token()
-            if token.token_type in (TOKEN_VAR, TOKEN_TEXT):
+            if token.token_type in (TokenType.VAR, TokenType.TEXT):
                 plural.append(token)
             else:
                 break
-    if token.contents.strip() != 'endblocktrans':
-        raise TemplateSyntaxError("'blocktrans' doesn't allow other block tags (seen %r) inside it" % token.contents)
+    end_tag_name = 'end%s' % bits[0]
+    if token.contents.strip() != end_tag_name:
+        raise TemplateSyntaxError("%r doesn't allow other block tags (seen %r) inside it" % (bits[0], token.contents))
 
     return BlockTranslateNode(extra_context, singular, plural, countervar,
-            counter, message_context)
+                              counter, message_context, trimmed=trimmed,
+                              asvar=asvar, tag_name=bits[0])
+
 
 @register.tag
 def language(parser, token):
     """
-    This will enable the given language just for this block.
+    Enable the given language just for this block.
 
     Usage::
 
         {% language "de" %}
             This is {{ bar }} and {{ boo }}.
         {% endlanguage %}
-
     """
     bits = token.split_contents()
     if len(bits) != 2:

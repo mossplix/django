@@ -1,10 +1,9 @@
-from __future__ import absolute_import
-
-from django.db import transaction, IntegrityError, DatabaseError
+from django.db import DatabaseError, IntegrityError, transaction
 from django.test import TestCase
 
-from .models import (Counter, WithCustomPK, InheritedCounter, ProxyCounter,
-                     SubCounter)
+from .models import (
+    Counter, InheritedCounter, ProxyCounter, SubCounter, WithCustomPK,
+)
 
 
 class ForceTests(TestCase):
@@ -21,24 +20,32 @@ class ForceTests(TestCase):
         # Won't work because force_update and force_insert are mutually
         # exclusive
         c.value = 4
-        self.assertRaises(ValueError, c.save, force_insert=True, force_update=True)
+        msg = 'Cannot force both insert and updating in model saving.'
+        with self.assertRaisesMessage(ValueError, msg):
+            c.save(force_insert=True, force_update=True)
 
         # Try to update something that doesn't have a primary key in the first
         # place.
         c1 = Counter(name="two", value=2)
-        self.assertRaises(ValueError, c1.save, force_update=True)
+        msg = 'Cannot force an update in save() with no primary key.'
+        with self.assertRaisesMessage(ValueError, msg):
+            with transaction.atomic():
+                c1.save(force_update=True)
         c1.save(force_insert=True)
 
         # Won't work because we can't insert a pk of the same value.
-        sid = transaction.savepoint()
         c.value = 5
-        self.assertRaises(IntegrityError, c.save, force_insert=True)
-        transaction.savepoint_rollback(sid)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                c.save(force_insert=True)
 
         # Trying to update should still fail, even with manual primary keys, if
         # the data isn't in the database already.
         obj = WithCustomPK(name=1, value=1)
-        self.assertRaises(DatabaseError, obj.save, force_update=True)
+        msg = 'Forced update did not affect any rows.'
+        with self.assertRaisesMessage(DatabaseError, msg):
+            with transaction.atomic():
+                obj.save(force_update=True)
 
 
 class InheritanceTests(TestCase):

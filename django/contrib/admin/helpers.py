@@ -1,34 +1,38 @@
-from __future__ import unicode_literals
+import json
 
 from django import forms
-from django.contrib.admin.util import (flatten_fieldsets, lookup_field,
-    display_for_field, label_for_field, help_text_for_field)
-from django.contrib.admin.templatetags.admin_static import static
-from django.contrib.contenttypes.models import ContentType
+from django.conf import settings
+from django.contrib.admin.utils import (
+    display_for_field, flatten_fieldsets, help_text_for_field, label_for_field,
+    lookup_field,
+)
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models.fields.related import ManyToManyRel
-from django.forms.util import flatatt
-from django.template.defaultfilters import capfirst
-from django.utils.encoding import force_text, smart_text
+from django.db.models import ManyToManyRel
+from django.forms.utils import flatatt
+from django.template.defaultfilters import capfirst, linebreaksbr
 from django.utils.html import conditional_escape, format_html
 from django.utils.safestring import mark_safe
-from django.utils import six
-from django.utils.translation import ugettext_lazy as _
-from django.conf import settings
-
+from django.utils.translation import gettext, gettext_lazy as _
 
 ACTION_CHECKBOX_NAME = '_selected_action'
 
+
 class ActionForm(forms.Form):
     action = forms.ChoiceField(label=_('Action:'))
-    select_across = forms.BooleanField(label='', required=False, initial=0,
-        widget=forms.HiddenInput({'class': 'select-across'}))
+    select_across = forms.BooleanField(
+        label='',
+        required=False,
+        initial=0,
+        widget=forms.HiddenInput({'class': 'select-across'}),
+    )
+
 
 checkbox = forms.CheckboxInput({'class': 'action-select'}, lambda value: False)
 
-class AdminForm(object):
+
+class AdminForm:
     def __init__(self, form, fieldsets, prepopulated_fields, readonly_fields=None, model_admin=None):
-        self.form, self.fieldsets = form, normalize_fieldsets(fieldsets)
+        self.form, self.fieldsets = form, fieldsets
         self.prepopulated_fields = [{
             'field': form[field_name],
             'dependencies': [form[f] for f in dependencies]
@@ -40,36 +44,32 @@ class AdminForm(object):
 
     def __iter__(self):
         for name, options in self.fieldsets:
-            yield Fieldset(self.form, name,
+            yield Fieldset(
+                self.form, name,
                 readonly_fields=self.readonly_fields,
                 model_admin=self.model_admin,
                 **options
             )
 
-    def first_field(self):
-        try:
-            fieldset_name, fieldset_options = self.fieldsets[0]
-            field_name = fieldset_options['fields'][0]
-            if not isinstance(field_name, six.string_types):
-                field_name = field_name[0]
-            return self.form[field_name]
-        except (KeyError, IndexError):
-            pass
-        try:
-            return next(iter(self.form))
-        except StopIteration:
-            return None
+    @property
+    def errors(self):
+        return self.form.errors
 
-    def _media(self):
+    @property
+    def non_field_errors(self):
+        return self.form.non_field_errors
+
+    @property
+    def media(self):
         media = self.form.media
         for fs in self:
             media = media + fs.media
         return media
-    media = property(_media)
 
-class Fieldset(object):
+
+class Fieldset:
     def __init__(self, form, name=None, readonly_fields=(), fields=(), classes=(),
-      description=None, model_admin=None):
+                 description=None, model_admin=None):
         self.form = form
         self.name, self.fields = name, fields
         self.classes = ' '.join(classes)
@@ -77,27 +77,29 @@ class Fieldset(object):
         self.model_admin = model_admin
         self.readonly_fields = readonly_fields
 
-    def _media(self):
+    @property
+    def media(self):
         if 'collapse' in self.classes:
             extra = '' if settings.DEBUG else '.min'
-            js = ['jquery%s.js' % extra,
-                  'jquery.init.js',
-                  'collapse%s.js' % extra]
-            return forms.Media(js=[static('admin/js/%s' % url) for url in js])
+            return forms.Media(js=['admin/js/collapse%s.js' % extra])
         return forms.Media()
-    media = property(_media)
 
     def __iter__(self):
         for field in self.fields:
             yield Fieldline(self.form, field, self.readonly_fields, model_admin=self.model_admin)
 
-class Fieldline(object):
+
+class Fieldline:
     def __init__(self, form, field, readonly_fields=None, model_admin=None):
-        self.form = form # A django.forms.Form instance
-        if not hasattr(field, "__iter__") or isinstance(field, six.text_type):
+        self.form = form  # A django.forms.Form instance
+        if not hasattr(field, "__iter__") or isinstance(field, str):
             self.fields = [field]
         else:
             self.fields = field
+        self.has_visible_field = not all(
+            field in self.form.fields and self.form.fields[field].widget.is_hidden
+            for field in self.fields
+        )
         self.model_admin = model_admin
         if readonly_fields is None:
             readonly_fields = ()
@@ -106,98 +108,126 @@ class Fieldline(object):
     def __iter__(self):
         for i, field in enumerate(self.fields):
             if field in self.readonly_fields:
-                yield AdminReadonlyField(self.form, field, is_first=(i == 0),
-                    model_admin=self.model_admin)
+                yield AdminReadonlyField(self.form, field, is_first=(i == 0), model_admin=self.model_admin)
             else:
                 yield AdminField(self.form, field, is_first=(i == 0))
 
     def errors(self):
-        return mark_safe('\n'.join([self.form[f].errors.as_ul() for f in self.fields if f not in self.readonly_fields]).strip('\n'))
+        return mark_safe(
+            '\n'.join(
+                self.form[f].errors.as_ul() for f in self.fields if f not in self.readonly_fields
+            ).strip('\n')
+        )
 
-class AdminField(object):
+
+class AdminField:
     def __init__(self, form, field, is_first):
-        self.field = form[field] # A django.forms.BoundField instance
-        self.is_first = is_first # Whether this field is first on the line
+        self.field = form[field]  # A django.forms.BoundField instance
+        self.is_first = is_first  # Whether this field is first on the line
         self.is_checkbox = isinstance(self.field.field.widget, forms.CheckboxInput)
+        self.is_readonly = False
 
     def label_tag(self):
         classes = []
-        contents = conditional_escape(force_text(self.field.label))
+        contents = conditional_escape(self.field.label)
         if self.is_checkbox:
             classes.append('vCheckboxLabel')
-        else:
-            contents += ':'
+
         if self.field.field.required:
             classes.append('required')
         if not self.is_first:
             classes.append('inline')
-        attrs = classes and {'class': ' '.join(classes)} or {}
-        return self.field.label_tag(contents=mark_safe(contents), attrs=attrs)
+        attrs = {'class': ' '.join(classes)} if classes else {}
+        # checkboxes should not have a label suffix as the checkbox appears
+        # to the left of the label.
+        return self.field.label_tag(
+            contents=mark_safe(contents), attrs=attrs,
+            label_suffix='' if self.is_checkbox else None,
+        )
 
     def errors(self):
         return mark_safe(self.field.errors.as_ul())
 
-class AdminReadonlyField(object):
+
+class AdminReadonlyField:
     def __init__(self, form, field, is_first, model_admin=None):
-        label = label_for_field(field, form._meta.model, model_admin)
         # Make self.field look a little bit like a field. This means that
         # {{ field.name }} must be a useful class name to identify the field.
         # For convenience, store other field-related data here too.
         if callable(field):
-            class_name = field.__name__ != '<lambda>' and field.__name__ or ''
+            class_name = field.__name__ if field.__name__ != '<lambda>' else ''
         else:
             class_name = field
+
+        if form._meta.labels and class_name in form._meta.labels:
+            label = form._meta.labels[class_name]
+        else:
+            label = label_for_field(field, form._meta.model, model_admin, form=form)
+
+        if form._meta.help_texts and class_name in form._meta.help_texts:
+            help_text = form._meta.help_texts[class_name]
+        else:
+            help_text = help_text_for_field(class_name, form._meta.model)
+
         self.field = {
             'name': class_name,
             'label': label,
+            'help_text': help_text,
             'field': field,
-            'help_text': help_text_for_field(class_name, form._meta.model)
         }
         self.form = form
         self.model_admin = model_admin
         self.is_first = is_first
         self.is_checkbox = False
         self.is_readonly = True
+        self.empty_value_display = model_admin.get_empty_value_display()
 
     def label_tag(self):
         attrs = {}
         if not self.is_first:
             attrs["class"] = "inline"
         label = self.field['label']
-        return format_html('<label{0}>{1}:</label>',
-                           flatatt(attrs),
-                           capfirst(force_text(label)))
+        return format_html('<label{}>{}{}</label>', flatatt(attrs), capfirst(label), self.form.label_suffix)
 
     def contents(self):
         from django.contrib.admin.templatetags.admin_list import _boolean_icon
-        from django.contrib.admin.views.main import EMPTY_CHANGELIST_VALUE
         field, obj, model_admin = self.field['field'], self.form.instance, self.model_admin
         try:
             f, attr, value = lookup_field(field, obj, model_admin)
         except (AttributeError, ValueError, ObjectDoesNotExist):
-            result_repr = EMPTY_CHANGELIST_VALUE
+            result_repr = self.empty_value_display
         else:
+            if field in self.form.fields:
+                widget = self.form[field].field.widget
+                # This isn't elegant but suffices for contrib.auth's
+                # ReadOnlyPasswordHashWidget.
+                if getattr(widget, 'read_only', False):
+                    return widget.render(field, value)
             if f is None:
-                boolean = getattr(attr, "boolean", False)
-                if boolean:
+                if getattr(attr, 'boolean', False):
                     result_repr = _boolean_icon(value)
                 else:
-                    result_repr = smart_text(value)
-                    if getattr(attr, "allow_tags", False):
-                        result_repr = mark_safe(result_repr)
+                    if hasattr(value, "__html__"):
+                        result_repr = value
+                    else:
+                        result_repr = linebreaksbr(value)
             else:
-                if isinstance(f.rel, ManyToManyRel) and value is not None:
-                    result_repr = ", ".join(map(six.text_type, value.all()))
+                if isinstance(f.remote_field, ManyToManyRel) and value is not None:
+                    result_repr = ", ".join(map(str, value.all()))
                 else:
-                    result_repr = display_for_field(value, f)
+                    result_repr = display_for_field(value, f, self.empty_value_display)
+                result_repr = linebreaksbr(result_repr)
         return conditional_escape(result_repr)
 
-class InlineAdminFormSet(object):
+
+class InlineAdminFormSet:
     """
     A wrapper around an inline formset for use in the admin system.
     """
     def __init__(self, inline, formset, fieldsets, prepopulated_fields=None,
-            readonly_fields=None, model_admin=None):
+                 readonly_fields=None, model_admin=None, has_add_permission=True,
+                 has_change_permission=True, has_delete_permission=True,
+                 has_view_permission=True):
         self.opts = inline
         self.formset = formset
         self.fieldsets = fieldsets
@@ -208,84 +238,130 @@ class InlineAdminFormSet(object):
         if prepopulated_fields is None:
             prepopulated_fields = {}
         self.prepopulated_fields = prepopulated_fields
+        self.classes = ' '.join(inline.classes) if inline.classes else ''
+        self.has_add_permission = has_add_permission
+        self.has_change_permission = has_change_permission
+        self.has_delete_permission = has_delete_permission
+        self.has_view_permission = has_view_permission
 
     def __iter__(self):
+        if self.has_change_permission:
+            readonly_fields_for_editing = self.readonly_fields
+        else:
+            readonly_fields_for_editing = self.readonly_fields + flatten_fieldsets(self.fieldsets)
+
         for form, original in zip(self.formset.initial_forms, self.formset.get_queryset()):
-            yield InlineAdminForm(self.formset, form, self.fieldsets,
-                self.prepopulated_fields, original, self.readonly_fields,
-                model_admin=self.opts)
+            view_on_site_url = self.opts.get_view_on_site_url(original)
+            yield InlineAdminForm(
+                self.formset, form, self.fieldsets, self.prepopulated_fields,
+                original, readonly_fields_for_editing, model_admin=self.opts,
+                view_on_site_url=view_on_site_url,
+            )
         for form in self.formset.extra_forms:
-            yield InlineAdminForm(self.formset, form, self.fieldsets,
-                self.prepopulated_fields, None, self.readonly_fields,
-                model_admin=self.opts)
-        yield InlineAdminForm(self.formset, self.formset.empty_form,
-            self.fieldsets, self.prepopulated_fields, None,
-            self.readonly_fields, model_admin=self.opts)
+            yield InlineAdminForm(
+                self.formset, form, self.fieldsets, self.prepopulated_fields,
+                None, self.readonly_fields, model_admin=self.opts,
+            )
+        if self.has_add_permission:
+            yield InlineAdminForm(
+                self.formset, self.formset.empty_form,
+                self.fieldsets, self.prepopulated_fields, None,
+                self.readonly_fields, model_admin=self.opts,
+            )
 
     def fields(self):
         fk = getattr(self.formset, "fk", None)
+        empty_form = self.formset.empty_form
+        meta_labels = empty_form._meta.labels or {}
+        meta_help_texts = empty_form._meta.help_texts or {}
         for i, field_name in enumerate(flatten_fieldsets(self.fieldsets)):
             if fk and fk.name == field_name:
                 continue
-            if field_name in self.readonly_fields:
+            if not self.has_change_permission or field_name in self.readonly_fields:
                 yield {
-                    'label': label_for_field(field_name, self.opts.model, self.opts),
-                    'widget': {
-                        'is_hidden': False
-                    },
+                    'name': field_name,
+                    'label': meta_labels.get(field_name) or label_for_field(
+                        field_name,
+                        self.opts.model,
+                        self.opts,
+                        form=empty_form,
+                    ),
+                    'widget': {'is_hidden': False},
                     'required': False,
-                    'help_text': help_text_for_field(field_name, self.opts.model),
+                    'help_text': meta_help_texts.get(field_name) or help_text_for_field(field_name, self.opts.model),
                 }
             else:
-                yield self.formset.form.base_fields[field_name]
+                form_field = empty_form.fields[field_name]
+                label = form_field.label
+                if label is None:
+                    label = label_for_field(field_name, self.opts.model, self.opts, form=empty_form)
+                yield {
+                    'name': field_name,
+                    'label': label,
+                    'widget': form_field.widget,
+                    'required': form_field.required,
+                    'help_text': form_field.help_text,
+                }
 
-    def _media(self):
+    def inline_formset_data(self):
+        verbose_name = self.opts.verbose_name
+        return json.dumps({
+            'name': '#%s' % self.formset.prefix,
+            'options': {
+                'prefix': self.formset.prefix,
+                'addText': gettext('Add another %(verbose_name)s') % {
+                    'verbose_name': capfirst(verbose_name),
+                },
+                'deleteText': gettext('Remove'),
+            }
+        })
+
+    @property
+    def forms(self):
+        return self.formset.forms
+
+    @property
+    def non_form_errors(self):
+        return self.formset.non_form_errors
+
+    @property
+    def media(self):
         media = self.opts.media + self.formset.media
         for fs in self:
             media = media + fs.media
         return media
-    media = property(_media)
+
 
 class InlineAdminForm(AdminForm):
     """
     A wrapper around an inline form for use in the admin system.
     """
     def __init__(self, formset, form, fieldsets, prepopulated_fields, original,
-      readonly_fields=None, model_admin=None):
+                 readonly_fields=None, model_admin=None, view_on_site_url=None):
         self.formset = formset
         self.model_admin = model_admin
         self.original = original
-        if original is not None:
-            self.original_content_type_id = ContentType.objects.get_for_model(original).pk
-        self.show_url = original and hasattr(original, 'get_absolute_url')
-        super(InlineAdminForm, self).__init__(form, fieldsets, prepopulated_fields,
-            readonly_fields, model_admin)
+        self.show_url = original and view_on_site_url is not None
+        self.absolute_url = view_on_site_url
+        super().__init__(form, fieldsets, prepopulated_fields, readonly_fields, model_admin)
 
     def __iter__(self):
         for name, options in self.fieldsets:
-            yield InlineFieldset(self.formset, self.form, name,
-                self.readonly_fields, model_admin=self.model_admin, **options)
+            yield InlineFieldset(
+                self.formset, self.form, name, self.readonly_fields,
+                model_admin=self.model_admin, **options
+            )
 
-    def has_auto_field(self):
-        if self.form._meta.model._meta.has_auto_field:
-            return True
-        # Also search any parents for an auto field.
-        for parent in self.form._meta.model._meta.get_parent_list():
-            if parent._meta.has_auto_field:
-                return True
-        return False
-
-    def field_count(self):
-        # tabular.html uses this function for colspan value.
-        num_of_fields = 0
-        if self.has_auto_field():
-            num_of_fields += 1
-        num_of_fields += len(self.fieldsets[0][1]["fields"])
-        if self.formset.can_order:
-            num_of_fields += 1
-        if self.formset.can_delete:
-            num_of_fields += 1
-        return num_of_fields
+    def needs_explicit_pk_field(self):
+        return (
+            # Auto fields are editable, so check for auto or non-editable pk.
+            self.form._meta.model._meta.auto_field or not self.form._meta.model._meta.pk.editable or
+            # Also search any parents for an auto field. (The pk info is
+            # propagated to child models so that does not need to be checked
+            # in parents.)
+            any(parent._meta.auto_field or not parent._meta.model._meta.pk.editable
+                for parent in self.form._meta.model._meta.get_parent_list())
+        )
 
     def pk_field(self):
         return AdminField(self.form, self.formset._pk_field.name, False)
@@ -305,48 +381,27 @@ class InlineAdminForm(AdminForm):
         from django.forms.formsets import ORDERING_FIELD_NAME
         return AdminField(self.form, ORDERING_FIELD_NAME, False)
 
+
 class InlineFieldset(Fieldset):
     def __init__(self, formset, *args, **kwargs):
         self.formset = formset
-        super(InlineFieldset, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def __iter__(self):
         fk = getattr(self.formset, "fk", None)
         for field in self.fields:
-            if fk and fk.name == field:
-                continue
-            yield Fieldline(self.form, field, self.readonly_fields,
-                model_admin=self.model_admin)
+            if not fk or fk.name != field:
+                yield Fieldline(self.form, field, self.readonly_fields, model_admin=self.model_admin)
 
-class AdminErrorList(forms.util.ErrorList):
-    """
-    Stores all errors for the form/formsets in an add/change stage view.
-    """
+
+class AdminErrorList(forms.utils.ErrorList):
+    """Store errors for the form/formsets in an add/change view."""
     def __init__(self, form, inline_formsets):
+        super().__init__()
+
         if form.is_bound:
-            self.extend(list(six.itervalues(form.errors)))
+            self.extend(form.errors.values())
             for inline_formset in inline_formsets:
                 self.extend(inline_formset.non_form_errors())
                 for errors_in_inline_form in inline_formset.errors:
-                    self.extend(list(six.itervalues(errors_in_inline_form)))
-
-def normalize_fieldsets(fieldsets):
-    """
-    Make sure the keys in fieldset dictionaries are strings. Returns the
-    normalized data.
-    """
-    result = []
-    for name, options in fieldsets:
-        result.append((name, normalize_dictionary(options)))
-    return result
-
-def normalize_dictionary(data_dict):
-    """
-    Converts all the keys in "data_dict" to strings. The keys must be
-    convertible using str().
-    """
-    for key, value in data_dict.items():
-        if not isinstance(key, str):
-            del data_dict[key]
-            data_dict[str(key)] = value
-    return data_dict
+                    self.extend(errors_in_inline_form.values())

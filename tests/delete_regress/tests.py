@@ -1,64 +1,56 @@
-from __future__ import absolute_import
-
 import datetime
 
-from django.conf import settings
-from django.db import transaction, DEFAULT_DB_ALIAS, models
-from django.db.utils import ConnectionHandler
+from django.db import connection, models, transaction
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 
-from .models import (Book, Award, AwardNote, Person, Child, Toy, PlayedWith,
-    PlayedWithNote, Email, Researcher, Food, Eaten, Policy, Version, Location,
-    Item, Image, File, Photo, FooFile, FooImage, FooPhoto, FooFileProxy, Login,
-    OrgUnit, OrderedPerson, House)
+from .models import (
+    Award, AwardNote, Book, Child, Contact, Eaten, Email, File, Food, FooFile,
+    FooFileProxy, FooImage, FooPhoto, House, Image, Item, Location, Login,
+    OrderedPerson, OrgUnit, Person, Photo, PlayedWith, PlayedWithNote, Policy,
+    Researcher, Toy, Version,
+)
 
 
 # Can't run this test under SQLite, because you can't
 # get two connections to an in-memory database.
+@skipUnlessDBFeature('test_db_allows_multiple_connections')
 class DeleteLockingTest(TransactionTestCase):
+
+    available_apps = ['delete_regress']
+
     def setUp(self):
         # Create a second connection to the default database
-        new_connections = ConnectionHandler(settings.DATABASES)
-        self.conn2 = new_connections[DEFAULT_DB_ALIAS]
-        # Put both DB connections into managed transaction mode
-        transaction.enter_transaction_management()
-        self.conn2.enter_transaction_management()
+        self.conn2 = connection.copy()
+        self.conn2.set_autocommit(False)
 
     def tearDown(self):
         # Close down the second connection.
-        transaction.leave_transaction_management()
-        self.conn2.abort()
+        self.conn2.rollback()
         self.conn2.close()
 
-    @skipUnlessDBFeature('test_db_allows_multiple_connections')
     def test_concurrent_delete(self):
-        "Deletes on concurrent transactions don't collide and lock the database. Regression for #9479"
+        """Concurrent deletes don't collide and lock the database (#9479)."""
+        with transaction.atomic():
+            Book.objects.create(id=1, pagecount=100)
+            Book.objects.create(id=2, pagecount=200)
+            Book.objects.create(id=3, pagecount=300)
 
-        # Create some dummy data
-        b1 = Book(id=1, pagecount=100)
-        b2 = Book(id=2, pagecount=200)
-        b3 = Book(id=3, pagecount=300)
-        b1.save()
-        b2.save()
-        b3.save()
+        with transaction.atomic():
+            # Start a transaction on the main connection.
+            self.assertEqual(3, Book.objects.count())
 
-        transaction.commit()
+            # Delete something using another database connection.
+            with self.conn2.cursor() as cursor2:
+                cursor2.execute("DELETE from delete_regress_book WHERE id = 1")
+            self.conn2.commit()
 
-        self.assertEqual(3, Book.objects.count())
+            # In the same transaction on the main connection, perform a
+            # queryset delete that covers the object deleted with the other
+            # connection. This causes an infinite loop under MySQL InnoDB
+            # unless we keep track of already deleted objects.
+            Book.objects.filter(pagecount__lt=250).delete()
 
-        # Delete something using connection 2.
-        cursor2 = self.conn2.cursor()
-        cursor2.execute('DELETE from delete_regress_book WHERE id=1')
-        self.conn2._commit()
-
-        # Now perform a queryset delete that covers the object
-        # deleted in connection 2. This causes an infinite loop
-        # under MySQL InnoDB unless we keep track of already
-        # deleted objects.
-        Book.objects.filter(pagecount__lt=250).delete()
-        transaction.commit()
         self.assertEqual(1, Book.objects.count())
-        transaction.commit()
 
 
 class DeleteCascadeTests(TestCase):
@@ -66,12 +58,10 @@ class DeleteCascadeTests(TestCase):
         """
         Django cascades deletes through generic-related objects to their
         reverse relations.
-
         """
         person = Person.objects.create(name='Nelson Mandela')
         award = Award.objects.create(name='Nobel', content_object=person)
-        note = AwardNote.objects.create(note='a peace prize',
-                                        award=award)
+        AwardNote.objects.create(note='a peace prize', award=award)
         self.assertEqual(AwardNote.objects.count(), 1)
         person.delete()
         self.assertEqual(Award.objects.count(), 0)
@@ -84,14 +74,11 @@ class DeleteCascadeTests(TestCase):
         some other model has an FK to that through model, deletion is cascaded
         from one of the participants in the M2M, to the through model, to its
         related model.
-
         """
         juan = Child.objects.create(name='Juan')
         paints = Toy.objects.create(name='Paints')
-        played = PlayedWith.objects.create(child=juan, toy=paints,
-                                           date=datetime.date.today())
-        note = PlayedWithNote.objects.create(played=played,
-                                             note='the next Jackson Pollock')
+        played = PlayedWith.objects.create(child=juan, toy=paints, date=datetime.date.today())
+        PlayedWithNote.objects.create(played=played, note='the next Jackson Pollock')
         self.assertEqual(PlayedWithNote.objects.count(), 1)
         paints.delete()
         self.assertEqual(PlayedWith.objects.count(), 0)
@@ -102,11 +89,14 @@ class DeleteCascadeTests(TestCase):
         policy = Policy.objects.create(pk=1, policy_number="1234")
         version = Version.objects.create(policy=policy)
         location = Location.objects.create(version=version)
-        item = Item.objects.create(version=version, location=location)
+        Item.objects.create(version=version, location=location)
         policy.delete()
 
 
 class DeleteCascadeTransactionTests(TransactionTestCase):
+
+    available_apps = ['delete_regress']
+
     def test_inheritance(self):
         """
         Auto-created many-to-many through tables referencing a parent model are
@@ -126,10 +116,9 @@ class DeleteCascadeTransactionTests(TransactionTestCase):
     def test_to_field(self):
         """
         Cascade deletion works with ForeignKey.to_field set to non-PK.
-
         """
         apple = Food.objects.create(name="apple")
-        eaten = Eaten.objects.create(food=apple, meal="lunch")
+        Eaten.objects.create(food=apple, meal="lunch")
 
         apple.delete()
         self.assertFalse(Food.objects.exists())
@@ -140,8 +129,9 @@ class LargeDeleteTests(TestCase):
     def test_large_deletes(self):
         "Regression for #13309 -- if the number of objects > chunk size, deletion still occurs"
         for x in range(300):
-            track = Book.objects.create(pagecount=x+100)
+            Book.objects.create(pagecount=x + 100)
         # attach a signal to make sure we will not fast-delete
+
         def noop(*args, **kwargs):
             pass
         models.signals.post_delete.connect(noop, sender=Book)
@@ -155,7 +145,6 @@ class ProxyDeleteTest(TestCase):
     Tests on_delete behavior for proxy models.
 
     See #16128.
-
     """
     def create_image(self):
         """Return an Image referenced by both a FooImage and a FooFile."""
@@ -172,12 +161,10 @@ class ProxyDeleteTest(TestCase):
 
         return test_image
 
-
     def test_delete_proxy(self):
         """
         Deleting the *proxy* instance bubbles through to its non-proxy and
         *all* referring objects are deleted.
-
         """
         self.create_image()
 
@@ -191,12 +178,10 @@ class ProxyDeleteTest(TestCase):
         self.assertEqual(len(FooImage.objects.all()), 0)
         self.assertEqual(len(FooFile.objects.all()), 0)
 
-
     def test_delete_proxy_of_proxy(self):
         """
         Deleting a proxy-of-proxy instance should bubble through to its proxy
         and non-proxy parents, deleting *all* referring objects.
-
         """
         test_image = self.create_image()
 
@@ -218,12 +203,10 @@ class ProxyDeleteTest(TestCase):
         self.assertEqual(len(FooFile.objects.all()), 0)
         self.assertEqual(len(FooImage.objects.all()), 0)
 
-
     def test_delete_concrete_parent(self):
         """
         Deleting an instance of a concrete model should also delete objects
         referencing its proxy subclass.
-
         """
         self.create_image()
 
@@ -238,7 +221,6 @@ class ProxyDeleteTest(TestCase):
         self.assertEqual(len(FooFile.objects.all()), 0)
         self.assertEqual(len(FooImage.objects.all()), 0)
 
-
     def test_delete_proxy_pair(self):
         """
         If a pair of proxy models are linked by an FK from one concrete parent
@@ -247,7 +229,6 @@ class ProxyDeleteTest(TestCase):
         IntegrityError on databases unable to defer integrity checks).
 
         Refs #17918.
-
         """
         # Create an Image (proxy of File) and FooFileProxy (proxy of FooFile,
         # which has an FK to File)
@@ -260,10 +241,12 @@ class ProxyDeleteTest(TestCase):
         self.assertEqual(len(FooFileProxy.objects.all()), 0)
 
     def test_19187_values(self):
-        with self.assertRaises(TypeError):
+        msg = 'Cannot call delete() after .values() or .values_list()'
+        with self.assertRaisesMessage(TypeError, msg):
             Image.objects.values().delete()
-        with self.assertRaises(TypeError):
+        with self.assertRaisesMessage(TypeError, msg):
             Image.objects.values_list().delete()
+
 
 class Ticket19102Tests(TestCase):
     """
@@ -275,11 +258,12 @@ class Ticket19102Tests(TestCase):
     Note that .values() is not tested here on purpose. .values().delete()
     doesn't work for non fast-path deletes at all.
     """
-    def setUp(self):
-        self.o1 = OrgUnit.objects.create(name='o1')
-        self.o2 = OrgUnit.objects.create(name='o2')
-        self.l1 = Login.objects.create(description='l1', orgunit=self.o1)
-        self.l2 = Login.objects.create(description='l2', orgunit=self.o2)
+    @classmethod
+    def setUpTestData(cls):
+        cls.o1 = OrgUnit.objects.create(name='o1')
+        cls.o2 = OrgUnit.objects.create(name='o2')
+        cls.l1 = Login.objects.create(description='l1', orgunit=cls.o1)
+        cls.l2 = Login.objects.create(description='l2', orgunit=cls.o2)
 
     @skipUnlessDBFeature("update_can_self_select")
     def test_ticket_19102_annotate(self):
@@ -300,7 +284,7 @@ class Ticket19102Tests(TestCase):
             Login.objects.order_by('description').filter(
                 orgunit__name__isnull=False
             ).extra(
-                select={'extraf':'1'}
+                select={'extraf': '1'}
             ).filter(
                 pk=self.l1.pk
             ).delete()
@@ -348,7 +332,7 @@ class Ticket19102Tests(TestCase):
         self.assertTrue(Login.objects.filter(pk=self.l2.pk).exists())
 
 
-class OrderedDeleteTests(TestCase):
+class DeleteTests(TestCase):
     def test_meta_ordered_delete(self):
         # When a subquery is performed by deletion code, the subquery must be
         # cleared of all ordering. There was a but that caused _meta ordering
@@ -358,3 +342,27 @@ class OrderedDeleteTests(TestCase):
         OrderedPerson.objects.create(name='Bob', lives_in=h)
         OrderedPerson.objects.filter(lives_in__address='Foo').delete()
         self.assertEqual(OrderedPerson.objects.count(), 0)
+
+    def test_foreign_key_delete_nullifies_correct_columns(self):
+        """
+        With a model (Researcher) that has two foreign keys pointing to the
+        same model (Contact), deleting an instance of the target model
+        (contact1) nullifies the correct fields of Researcher.
+        """
+        contact1 = Contact.objects.create(label='Contact 1')
+        contact2 = Contact.objects.create(label='Contact 2')
+        researcher1 = Researcher.objects.create(
+            primary_contact=contact1,
+            secondary_contact=contact2,
+        )
+        researcher2 = Researcher.objects.create(
+            primary_contact=contact2,
+            secondary_contact=contact1,
+        )
+        contact1.delete()
+        researcher1.refresh_from_db()
+        researcher2.refresh_from_db()
+        self.assertIsNone(researcher1.primary_contact)
+        self.assertEqual(researcher1.secondary_contact, contact2)
+        self.assertEqual(researcher2.primary_contact, contact2)
+        self.assertIsNone(researcher2.secondary_contact)

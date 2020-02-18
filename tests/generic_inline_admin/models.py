@@ -1,7 +1,8 @@
-from django.contrib.contenttypes import generic
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation,
+)
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 
 class Episode(models.Model):
@@ -10,39 +11,19 @@ class Episode(models.Model):
     author = models.CharField(max_length=100, blank=True)
 
 
-@python_2_unicode_compatible
 class Media(models.Model):
     """
     Media that can associated to any object.
     """
-    content_type = models.ForeignKey(ContentType)
+    content_type = models.ForeignKey(ContentType, models.CASCADE)
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey()
+    content_object = GenericForeignKey()
     url = models.URLField()
     description = models.CharField(max_length=100, blank=True)
     keywords = models.CharField(max_length=100, blank=True)
 
     def __str__(self):
         return self.url
-
-#
-# These models let us test the different GenericInline settings at
-# different urls in the admin site.
-#
-
-#
-# Generic inline with extra = 0
-#
-
-class EpisodeExtra(Episode):
-    pass
-
-
-#
-# Generic inline with extra and max_num
-#
-class EpisodeMaxNum(Episode):
-    pass
 
 
 #
@@ -53,11 +34,11 @@ class Category(models.Model):
 
 
 class PhoneNumber(models.Model):
-    content_type = models.ForeignKey(ContentType)
+    content_type = models.ForeignKey(ContentType, models.CASCADE)
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey('content_type', 'object_id')
+    content_object = GenericForeignKey('content_type', 'object_id')
     phone_number = models.CharField(max_length=30)
-    category = models.ForeignKey(Category, null=True, blank=True)
+    category = models.ForeignKey(Category, models.SET_NULL, null=True, blank=True)
 
     class Meta:
         unique_together = (('content_type', 'object_id', 'phone_number',),)
@@ -65,12 +46,11 @@ class PhoneNumber(models.Model):
 
 class Contact(models.Model):
     name = models.CharField(max_length=50)
-    phone_numbers = generic.GenericRelation(PhoneNumber)
+    phone_numbers = GenericRelation(PhoneNumber, related_query_name='phone_numbers')
+
 
 #
 # Generic inline with can_delete=False
 #
 class EpisodePermanent(Episode):
     pass
-
-

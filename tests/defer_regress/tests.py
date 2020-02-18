@@ -1,15 +1,16 @@
-from __future__ import absolute_import
-
 from operator import attrgetter
 
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.sessions.backends.db import SessionStore
+from django.db import models
 from django.db.models import Count
-from django.db.models.loading import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
-from .models import (ResolveThis, Item, RelatedItem, Child, Leaf, Proxy,
-    SimpleItem, Feature, ItemAndSimpleItem, OneToOneItem, SpecialFeature)
+from .models import (
+    Base, Child, Derived, Feature, Item, ItemAndSimpleItem, Leaf, Location,
+    OneToOneItem, Proxy, ProxyRelated, RelatedItem, Request, ResolveThis,
+    SimpleItem, SpecialFeature,
+)
 
 
 class DeferRegressionTest(TestCase):
@@ -76,10 +77,22 @@ class DeferRegressionTest(TestCase):
         self.assertEqual(results[0].child.name, "c1")
         self.assertEqual(results[0].second_child.name, "c2")
 
-        results = Leaf.objects.only("name", "child", "second_child", "child__name", "second_child__name").select_related()
+        results = Leaf.objects.only(
+            "name", "child", "second_child", "child__name", "second_child__name"
+        ).select_related()
         self.assertEqual(results[0].child.name, "c1")
         self.assertEqual(results[0].second_child.name, "c2")
 
+        # Regression for #16409 - make sure defer() and only() work with annotate()
+        self.assertIsInstance(
+            list(SimpleItem.objects.annotate(Count('feature')).defer('name')),
+            list)
+        self.assertIsInstance(
+            list(SimpleItem.objects.annotate(Count('feature')).only('name')),
+            list)
+
+    @override_settings(SESSION_SERIALIZER='django.contrib.sessions.serializers.PickleSerializer')
+    def test_ticket_12163(self):
         # Test for #12163 - Pickling error saving session with unsaved model
         # instances.
         SESSION_KEY = '2b1189a188b44ad18c35e1baac6ceead'
@@ -89,7 +102,7 @@ class DeferRegressionTest(TestCase):
         s = SessionStore(SESSION_KEY)
         s.clear()
         s["item"] = item
-        s.save()
+        s.save(must_create=True)
 
         s = SessionStore(SESSION_KEY)
         s.modified = True
@@ -98,70 +111,23 @@ class DeferRegressionTest(TestCase):
         i2 = s["item"]
         self.assertFalse(i2._deferred)
 
-        # Regression for #11936 - loading.get_models should not return deferred
-        # models by default.
-        klasses = sorted(
-            cache.get_models(cache.get_app("defer_regress")),
-            key=lambda klass: klass.__name__
-        )
-        self.assertEqual(
-            klasses, [
-                Child,
-                Feature,
-                Item,
-                ItemAndSimpleItem,
-                Leaf,
-                OneToOneItem,
-                Proxy,
-                RelatedItem,
-                ResolveThis,
-                SimpleItem,
-                SpecialFeature,
-            ]
-        )
-
-        klasses = sorted(
-            map(
-                attrgetter("__name__"),
-                cache.get_models(
-                    cache.get_app("defer_regress"), include_deferred=True
-                ),
-            )
-        )
-        # FIXME: This is dependent on the order in which tests are run --
-        # this test case has to be the first, otherwise a LOT more classes
-        # appear.
-        self.assertEqual(
-            klasses, [
-                "Child",
-                "Child_Deferred_value",
-                "Feature",
-                "Item",
-                "ItemAndSimpleItem",
-                "Item_Deferred_name",
-                "Item_Deferred_name_other_value_text",
-                "Item_Deferred_name_other_value_value",
-                "Item_Deferred_other_value_text_value",
-                "Item_Deferred_text_value",
-                "Leaf",
-                "Leaf_Deferred_child_id_second_child_id_value",
-                "Leaf_Deferred_name_value",
-                "Leaf_Deferred_second_child_id_value",
-                "Leaf_Deferred_value",
-                "OneToOneItem",
-                "Proxy",
-                "RelatedItem",
-                "RelatedItem_Deferred_",
-                "RelatedItem_Deferred_item_id",
-                "ResolveThis",
-                "SimpleItem",
-                "SpecialFeature",
-            ]
-        )
-
+    def test_ticket_16409(self):
         # Regression for #16409 - make sure defer() and only() work with annotate()
-        self.assertIsInstance(list(SimpleItem.objects.annotate(Count('feature')).defer('name')), list)
-        self.assertIsInstance(list(SimpleItem.objects.annotate(Count('feature')).only('name')), list)
+        self.assertIsInstance(
+            list(SimpleItem.objects.annotate(Count('feature')).defer('name')),
+            list)
+        self.assertIsInstance(
+            list(SimpleItem.objects.annotate(Count('feature')).only('name')),
+            list)
+
+    def test_ticket_23270(self):
+        Derived.objects.create(text="foo", other_text="bar")
+        with self.assertNumQueries(1):
+            obj = Base.objects.select_related("derived").defer("text")[0]
+            self.assertIsInstance(obj.derived, Derived)
+            self.assertEqual("bar", obj.derived.other_text)
+            self.assertNotIn("text", obj.__dict__)
+            self.assertEqual(1, obj.derived.base_ptr_id)
 
     def test_only_and_defer_usage_on_proxy_models(self):
         # Regression for #15790 - only() broken for proxy models
@@ -179,7 +145,7 @@ class DeferRegressionTest(TestCase):
         self.assertEqual(dp.value, proxy.value, msg=msg)
 
     def test_resolve_columns(self):
-        rt = ResolveThis.objects.create(num=5.0, name='Foobar')
+        ResolveThis.objects.create(num=5.0, name='Foobar')
         qs = ResolveThis.objects.defer('num')
         self.assertEqual(1, qs.count())
         self.assertEqual('Foobar', qs[0].name)
@@ -215,7 +181,7 @@ class DeferRegressionTest(TestCase):
         item1 = Item.objects.create(name="first", value=47)
         item2 = Item.objects.create(name="second", value=42)
         simple = SimpleItem.objects.create(name="simple", value="23")
-        related = ItemAndSimpleItem.objects.create(item=item1, simple=simple)
+        ItemAndSimpleItem.objects.create(item=item1, simple=simple)
 
         obj = ItemAndSimpleItem.objects.defer('item').select_related('simple').get()
         self.assertEqual(obj.item, item1)
@@ -227,6 +193,17 @@ class DeferRegressionTest(TestCase):
         obj = ItemAndSimpleItem.objects.defer('item').select_related('simple').get()
         self.assertEqual(obj.item, item2)
         self.assertEqual(obj.item_id, item2.id)
+
+    def test_proxy_model_defer_with_select_related(self):
+        # Regression for #22050
+        item = Item.objects.create(name="first", value=47)
+        RelatedItem.objects.create(item=item)
+        # Defer fields with only()
+        obj = ProxyRelated.objects.all().select_related().only('item__name')[0]
+        with self.assertNumQueries(0):
+            self.assertEqual(obj.item.name, "first")
+        with self.assertNumQueries(1):
+            self.assertEqual(obj.item.value, 47)
 
     def test_only_with_select_related(self):
         # Test for #17485.
@@ -240,9 +217,59 @@ class DeferRegressionTest(TestCase):
         qs = SpecialFeature.objects.only('feature__item__name').select_related('feature__item')
         self.assertEqual(len(qs), 1)
 
-    def test_deferred_class_factory(self):
-        from django.db.models.query_utils import deferred_class_factory
-        new_class = deferred_class_factory(Item,
-            ('this_is_some_very_long_attribute_name_so_modelname_truncation_is_triggered',))
-        self.assertEqual(new_class.__name__,
-            'Item_Deferred_this_is_some_very_long_attribute_nac34b1f495507dad6b02e2cb235c875e')
+
+class DeferAnnotateSelectRelatedTest(TestCase):
+    def test_defer_annotate_select_related(self):
+        location = Location.objects.create()
+        Request.objects.create(location=location)
+        self.assertIsInstance(
+            list(Request.objects.annotate(Count('items')).select_related('profile', 'location')
+                 .only('profile', 'location')),
+            list
+        )
+        self.assertIsInstance(
+            list(Request.objects.annotate(Count('items')).select_related('profile', 'location')
+                 .only('profile__profile1', 'location__location1')),
+            list
+        )
+        self.assertIsInstance(
+            list(Request.objects.annotate(Count('items')).select_related('profile', 'location')
+                 .defer('request1', 'request2', 'request3', 'request4')),
+            list
+        )
+
+
+class DeferDeletionSignalsTests(TestCase):
+    senders = [Item, Proxy]
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.item_pk = Item.objects.create(value=1).pk
+
+    def setUp(self):
+        self.pre_delete_senders = []
+        self.post_delete_senders = []
+        for sender in self.senders:
+            models.signals.pre_delete.connect(self.pre_delete_receiver, sender)
+            models.signals.post_delete.connect(self.post_delete_receiver, sender)
+
+    def tearDown(self):
+        for sender in self.senders:
+            models.signals.pre_delete.disconnect(self.pre_delete_receiver, sender)
+            models.signals.post_delete.disconnect(self.post_delete_receiver, sender)
+
+    def pre_delete_receiver(self, sender, **kwargs):
+        self.pre_delete_senders.append(sender)
+
+    def post_delete_receiver(self, sender, **kwargs):
+        self.post_delete_senders.append(sender)
+
+    def test_delete_defered_model(self):
+        Item.objects.only('value').get(pk=self.item_pk).delete()
+        self.assertEqual(self.pre_delete_senders, [Item])
+        self.assertEqual(self.post_delete_senders, [Item])
+
+    def test_delete_defered_proxy_model(self):
+        Proxy.objects.only('value').get(pk=self.item_pk).delete()
+        self.assertEqual(self.pre_delete_senders, [Proxy])
+        self.assertEqual(self.post_delete_senders, [Proxy])

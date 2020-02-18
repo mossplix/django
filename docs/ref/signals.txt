@@ -2,15 +2,13 @@
 Signals
 =======
 
-A list of all the signals that Django sends.
+A list of all the signals that Django sends. All built-in signals are sent
+using the :meth:`~django.dispatch.Signal.send` method.
 
 .. seealso::
 
     See the documentation on the :doc:`signal dispatcher </topics/signals>` for
     information regarding how to register for and receive signals.
-
-    The :doc:`comment framework </ref/contrib/comments/index>` sends a :doc:`set
-    of comment-related signals </ref/contrib/comments/signals>`.
 
     The :doc:`authentication framework </topics/auth/index>` sends :ref:`signals when
     a user is logged in / out <topics-auth-signals>`.
@@ -22,7 +20,7 @@ Model signals
    :synopsis: Signals sent by the model system.
 
 The :mod:`django.db.models.signals` module defines a set of signals sent by the
-module system.
+model system.
 
 .. warning::
 
@@ -31,14 +29,22 @@ module system.
     override in your own code.
 
     If you override these methods on your model, you must call the parent class'
-    methods for this signals to be sent.
+    methods for these signals to be sent.
 
     Note also that Django stores signal handlers as weak references by default,
     so if your handler is a local function, it may be garbage collected.  To
     prevent this, pass ``weak=False`` when you call the signal's :meth:`~django.dispatch.Signal.connect`.
 
-pre_init
---------
+.. note::
+
+    Model signals ``sender`` model can be lazily referenced when connecting a
+    receiver by specifying its full application label. For example, an
+    ``Question`` model defined in the ``polls`` application could be referenced
+    as ``'polls.Question'``. This sort of reference can be quite handy when
+    dealing with circular import dependencies and swappable models.
+
+``pre_init``
+------------
 
 .. attribute:: django.db.models.signals.pre_init
    :module:
@@ -54,30 +60,31 @@ Arguments sent with this signal:
     The model class that just had an instance created.
 
 ``args``
-    A list of positional arguments passed to ``__init__()``:
+    A list of positional arguments passed to ``__init__()``.
 
 ``kwargs``
-    A dictionary of keyword arguments passed to ``__init__()``:
+    A dictionary of keyword arguments passed to ``__init__()``.
 
-For example, the :doc:`tutorial </intro/tutorial01>` has this line::
+For example, the :doc:`tutorial </intro/tutorial02>` has this line::
 
-    p = Poll(question="What's up?", pub_date=datetime.now())
+    q = Question(question_text="What's new?", pub_date=timezone.now())
 
 The arguments sent to a :data:`pre_init` handler would be:
 
 ==========  ===============================================================
 Argument    Value
 ==========  ===============================================================
-``sender``  ``Poll`` (the class itself)
+``sender``  ``Question`` (the class itself)
 
 ``args``    ``[]`` (an empty list because there were no positional
-            arguments passed to ``__init__()``.)
+            arguments passed to ``__init__()``)
 
-``kwargs``  ``{'question': "What's up?", 'pub_date': datetime.now()}``
+``kwargs``  ``{'question_text': "What's new?",``
+            ``'pub_date': datetime.datetime(2012, 2, 26, 13, 0, 0, 775217, tzinfo=<UTC>)}``
 ==========  ===============================================================
 
-post_init
----------
+``post_init``
+-------------
 
 .. data:: django.db.models.signals.post_init
    :module:
@@ -92,8 +99,21 @@ Arguments sent with this signal:
 ``instance``
     The actual instance of the model that's just been created.
 
-pre_save
---------
+    .. note::
+
+        ``instance._state`` isn't set before sending the ``post_init`` signal,
+        so ``_state`` attributes always have their default values. For example,
+        ``_state.db`` is ``None`` and cannot be used to check an ``instance``
+        database.
+
+.. warning::
+
+    For performance reasons, you shouldn't perform queries in receivers of
+    ``pre_init`` or ``post_init`` signals because they would be executed for
+    each instance returned during queryset iteration.
+
+``pre_save``
+------------
 
 .. data:: django.db.models.signals.pre_save
    :module:
@@ -118,14 +138,12 @@ Arguments sent with this signal:
 ``using``
     The database alias being used.
 
-.. versionadded:: 1.5
-
 ``update_fields``
-    The set of fields to update explicitly specified in the ``save()`` method.
-    ``None`` if this argument was not used in the ``save()`` call.
+    The set of fields to update as passed to :meth:`.Model.save`, or ``None``
+    if ``update_fields`` wasn't passed to ``save()``.
 
-post_save
----------
+``post_save``
+-------------
 
 .. data:: django.db.models.signals.post_save
    :module:
@@ -153,14 +171,12 @@ Arguments sent with this signal:
 ``using``
     The database alias being used.
 
-.. versionadded:: 1.5
-
 ``update_fields``
-    The set of fields to update explicitly specified in the ``save()`` method.
-    ``None`` if this argument was not used in the ``save()`` call.
+    The set of fields to update as passed to :meth:`.Model.save`, or ``None``
+    if ``update_fields`` wasn't passed to ``save()``.
 
-pre_delete
-----------
+``pre_delete``
+--------------
 
 .. data:: django.db.models.signals.pre_delete
    :module:
@@ -179,8 +195,8 @@ Arguments sent with this signal:
 ``using``
     The database alias being used.
 
-post_delete
------------
+``post_delete``
+---------------
 
 .. data:: django.db.models.signals.post_delete
    :module:
@@ -203,8 +219,8 @@ Arguments sent with this signal:
 ``using``
     The database alias being used.
 
-m2m_changed
------------
+``m2m_changed``
+---------------
 
 .. data:: django.db.models.signals.m2m_changed
    :module:
@@ -254,9 +270,16 @@ Arguments sent with this signal:
     from the relation.
 
 ``pk_set``
-    For the ``pre_add``, ``post_add``, ``pre_remove`` and ``post_remove``
-    actions, this is a list of primary key values that have been added to
-    or removed from the relation.
+    For the ``pre_add`` and ``post_add`` actions, this is a set of primary key
+    values that will be, or have been, added to the relation. This may be a
+    subset of the values submitted to be added, since inserts must filter
+    existing values in order to avoid a database ``IntegrityError``.
+
+    For the ``pre_remove`` and ``post_remove`` actions, this is a set of
+    primary key values that was submitted to be removed from the relation. This
+    is not dependent on whether the values actually will be, or have been,
+    removed. In particular, non-existent values may be submitted, and will
+    appear in ``pk_set``, even though they have no effect on the database.
 
     For the ``pre_clear`` and ``post_clear`` actions, this is ``None``.
 
@@ -276,6 +299,8 @@ like this::
 
 If we connected a handler like this::
 
+    from django.db.models.signals import m2m_changed
+
     def toppings_changed(sender, **kwargs):
         # Do something
         pass
@@ -284,11 +309,11 @@ If we connected a handler like this::
 
 and then did something like this::
 
-    >>> p = Pizza.object.create(...)
+    >>> p = Pizza.objects.create(...)
     >>> t = Topping.objects.create(...)
     >>> p.toppings.add(t)
 
-the arguments sent to a :data:`m2m_changed` handler (``topppings_changed`` in
+the arguments sent to a :data:`m2m_changed` handler (``toppings_changed`` in
 the example above) would be:
 
 ==============  ============================================================
@@ -307,7 +332,7 @@ Argument        Value
 ``model``       ``Topping`` (the class of the objects added to the
                 ``Pizza``)
 
-``pk_set``      ``[t.id]`` (since only ``Topping t`` was added to the relation)
+``pk_set``      ``{t.id}`` (since only ``Topping t`` was added to the relation)
 
 ``using``       ``"default"`` (since the default router sends writes here)
 ==============  ============================================================
@@ -334,14 +359,14 @@ Argument        Value
 ``model``       ``Pizza`` (the class of the objects removed from the
                 ``Topping``)
 
-``pk_set``      ``[p.id]`` (since only ``Pizza p`` was removed from the
+``pk_set``      ``{p.id}`` (since only ``Pizza p`` was removed from the
                 relation)
 
 ``using``       ``"default"`` (since the default router sends writes here)
 ==============  ============================================================
 
-class_prepared
---------------
+``class_prepared``
+------------------
 
 .. data:: django.db.models.signals.class_prepared
    :module:
@@ -349,6 +374,12 @@ class_prepared
 Sent whenever a model class has been "prepared" -- that is, once model has
 been defined and registered with Django's model system. Django uses this
 signal internally; it's not generally used in third-party applications.
+
+Since this signal is sent during the app registry population process, and
+:meth:`AppConfig.ready() <django.apps.AppConfig.ready>` runs after the app
+registry is fully populated, receivers cannot be connected in that method.
+One possibility is to connect them ``AppConfig.__init__()`` instead, taking
+care not to import models or trigger calls to the app registry.
 
 Arguments that are sent with this signal:
 
@@ -360,42 +391,29 @@ Management signals
 
 Signals sent by :doc:`django-admin </ref/django-admin>`.
 
-post_syncdb
------------
+``pre_migrate``
+---------------
 
-.. data:: django.db.models.signals.post_syncdb
+.. data:: django.db.models.signals.pre_migrate
    :module:
 
-Sent by the :djadmin:`syncdb` command after it installs an application, and the
-:djadmin:`flush` command.
-
-Any handlers that listen to this signal need to be written in a particular
-place: a ``management`` module in one of your :setting:`INSTALLED_APPS`. If
-handlers are registered anywhere else they may not be loaded by
-:djadmin:`syncdb`. It is important that handlers of this signal perform
-idempotent changes (e.g. no database alterations) as this may cause the
-:djadmin:`flush` management command to fail if it also ran during the
-:djadmin:`syncdb` command.
+Sent by the :djadmin:`migrate` command before it starts to install an
+application. It's not emitted for applications that lack a ``models`` module.
 
 Arguments sent with this signal:
 
 ``sender``
-    The ``models`` module that was just installed. That is, if
-    :djadmin:`syncdb` just installed an app called ``"foo.bar.myapp"``,
-    ``sender`` will be the ``foo.bar.myapp.models`` module.
+    An :class:`~django.apps.AppConfig` instance for the application about to
+    be migrated/synced.
 
-``app``
+``app_config``
     Same as ``sender``.
-
-``created_models``
-    A list of the model classes from any app which :djadmin:`syncdb` has
-    created so far.
 
 ``verbosity``
     Indicates how much information manage.py is printing on screen. See
-    the :djadminopt:`--verbosity` flag for details.
+    the :option:`--verbosity` flag for details.
 
-    Functions which listen for :data:`post_syncdb` should adjust what they
+    Functions which listen for :data:`pre_migrate` should adjust what they
     output to the screen based on the value of this argument.
 
 ``interactive``
@@ -406,20 +424,101 @@ Arguments sent with this signal:
     For example, the :mod:`django.contrib.auth` app only prompts to create a
     superuser when ``interactive`` is ``True``.
 
-``db``
+``using``
+    The alias of database on which a command will operate.
+
+``plan``
+    The migration plan that is going to be used for the migration run. While
+    the plan is not public API, this allows for the rare cases when it is
+    necessary to know the plan. A plan is a list of two-tuples with the first
+    item being the instance of a migration class and the second item showing
+    if the migration was rolled back (``True``) or applied (``False``).
+
+``apps``
+    An instance of :data:`Apps <django.apps>` containing the state of the
+    project before the migration run. It should be used instead of the global
+    :attr:`apps <django.apps.apps>` registry to retrieve the models you
+    want to perform operations on.
+
+``post_migrate``
+----------------
+
+.. data:: django.db.models.signals.post_migrate
+   :module:
+
+Sent at the end of the :djadmin:`migrate` (even if no migrations are run) and
+:djadmin:`flush` commands. It's not emitted for applications that lack a
+``models`` module.
+
+Handlers of this signal must not perform database schema alterations as doing
+so may cause the :djadmin:`flush` command to fail if it runs during the
+:djadmin:`migrate` command.
+
+Arguments sent with this signal:
+
+``sender``
+    An :class:`~django.apps.AppConfig` instance for the application that was
+    just installed.
+
+``app_config``
+    Same as ``sender``.
+
+``verbosity``
+    Indicates how much information manage.py is printing on screen. See
+    the :option:`--verbosity` flag for details.
+
+    Functions which listen for :data:`post_migrate` should adjust what they
+    output to the screen based on the value of this argument.
+
+``interactive``
+    If ``interactive`` is ``True``, it's safe to prompt the user to input
+    things on the command line. If ``interactive`` is ``False``, functions
+    which listen for this signal should not try to prompt for anything.
+
+    For example, the :mod:`django.contrib.auth` app only prompts to create a
+    superuser when ``interactive`` is ``True``.
+
+``using``
     The database alias used for synchronization. Defaults to the ``default``
     database.
 
-For example, ``yourapp/management/__init__.py`` could be written like::
+``plan``
+    The migration plan that was used for the migration run. While the plan is
+    not public API, this allows for the rare cases when it is necessary to
+    know the plan. A plan is a list of two-tuples with the first item being
+    the instance of a migration class and the second item showing if the
+    migration was rolled back (``True``) or applied (``False``).
 
-    from django.db.models.signals import post_syncdb
-    import yourapp.models
+``apps``
+    An instance of :data:`Apps <django.apps.apps>` containing the state of the
+    project after the migration run. It should be used instead of the global
+    :attr:`apps <django.apps.apps>` registry to retrieve the models you
+    want to perform operations on.
+
+For example, you could register a callback in an
+:class:`~django.apps.AppConfig` like this::
+
+    from django.apps import AppConfig
+    from django.db.models.signals import post_migrate
 
     def my_callback(sender, **kwargs):
         # Your specific logic here
         pass
 
-    post_syncdb.connect(my_callback, sender=yourapp.models)
+    class MyAppConfig(AppConfig):
+        ...
+
+        def ready(self):
+            post_migrate.connect(my_callback, sender=self)
+
+.. note::
+
+    If you provide an :class:`~django.apps.AppConfig` instance as the sender
+    argument, please ensure that the signal is registered in
+    :meth:`~django.apps.AppConfig.ready`. ``AppConfig``\s are recreated for
+    tests that run with a modified set of :setting:`INSTALLED_APPS` (such as
+    when settings are overridden) and such signals should be connected for each
+    new ``AppConfig`` instance.
 
 Request/response signals
 ========================
@@ -429,8 +528,8 @@ Request/response signals
 
 Signals sent by the core framework when processing a request.
 
-request_started
----------------
+``request_started``
+-------------------
 
 .. data:: django.core.signals.request_started
    :module:
@@ -442,34 +541,24 @@ Arguments sent with this signal:
 ``sender``
     The handler class -- e.g. ``django.core.handlers.wsgi.WsgiHandler`` -- that
     handled the request.
+``environ``
+    The ``environ`` dictionary provided to the request.
 
-request_finished
-----------------
+``request_finished``
+--------------------
 
 .. data:: django.core.signals.request_finished
    :module:
 
-Sent when Django finishes processing an HTTP request.
-
-.. note::
-
-    When a view returns a :ref:`streaming response <httpresponse-streaming>`,
-    this signal is sent only after the entire response is consumed by the
-    client (strictly speaking, by the WSGI gateway).
-
-.. versionchanged:: 1.5
-
-    Before Django 1.5, this signal was fired before sending the content to the
-    client. In order to accomodate streaming responses, it is now fired after
-    sending the content.
+Sent when Django finishes delivering an HTTP response to the client.
 
 Arguments sent with this signal:
 
 ``sender``
     The handler class, as above.
 
-got_request_exception
----------------------
+``got_request_exception``
+-------------------------
 
 .. data:: django.core.signals.got_request_exception
    :module:
@@ -479,7 +568,7 @@ This signal is sent whenever Django encounters an exception while processing an 
 Arguments sent with this signal:
 
 ``sender``
-    The handler class, as above.
+    Unused (always ``None``).
 
 ``request``
     The :class:`~django.http.HttpRequest` object.
@@ -492,18 +581,22 @@ Test signals
 
 Signals only sent when :ref:`running tests <running-tests>`.
 
-setting_changed
----------------
+``setting_changed``
+-------------------
 
 .. data:: django.test.signals.setting_changed
    :module:
 
 This signal is sent when the value of a setting is changed through the
 ``django.test.TestCase.settings()`` context manager or the
-:func:`django.test.utils.override_settings` decorator/context manager.
+:func:`django.test.override_settings` decorator/context manager.
 
 It's actually sent twice: when the new value is applied ("setup") and when the
-original value is restored ("teardown").
+original value is restored ("teardown"). Use the ``enter`` argument to
+distinguish between the two.
+
+You can also import this signal from ``django.core.signals`` to avoid importing
+from ``django.test`` in non-test situations.
 
 Arguments sent with this signal:
 
@@ -517,8 +610,11 @@ Arguments sent with this signal:
     The value of the setting after the change. For settings that initially
     don't exist, in the "teardown" phase, ``value`` is ``None``.
 
-template_rendered
------------------
+``enter``
+    A boolean; ``True`` if the setting is applied, ``False`` if restored.
+
+``template_rendered``
+---------------------
 
 .. data:: django.test.signals.template_rendered
    :module:
@@ -547,8 +643,8 @@ Database Wrappers
 Signals sent by the database wrapper when a database connection is
 initiated.
 
-connection_created
-------------------
+``connection_created``
+----------------------
 
 .. data:: django.db.backends.signals.connection_created
    :module:
@@ -561,7 +657,7 @@ Arguments sent with this signal:
 
 ``sender``
     The database wrapper class -- i.e.
-    ``django.db.backends.postgresql_psycopg2.DatabaseWrapper`` or
+    ``django.db.backends.postgresql.DatabaseWrapper`` or
     ``django.db.backends.mysql.DatabaseWrapper``, etc.
 
 ``connection``

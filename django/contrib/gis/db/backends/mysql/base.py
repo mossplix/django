@@ -1,13 +1,16 @@
-from django.db.backends.mysql.base import *
-from django.db.backends.mysql.base import DatabaseWrapper as MySQLDatabaseWrapper
-from django.contrib.gis.db.backends.mysql.creation import MySQLCreation
-from django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection
-from django.contrib.gis.db.backends.mysql.operations import MySQLOperations
+from django.db.backends.mysql.base import (
+    DatabaseWrapper as MySQLDatabaseWrapper,
+)
+
+from .features import DatabaseFeatures
+from .introspection import MySQLIntrospection
+from .operations import MySQLOperations
+from .schema import MySQLGISSchemaEditor
+
 
 class DatabaseWrapper(MySQLDatabaseWrapper):
-
-    def __init__(self, *args, **kwargs):
-        super(DatabaseWrapper, self).__init__(*args, **kwargs)
-        self.creation = MySQLCreation(self)
-        self.ops = MySQLOperations(self)
-        self.introspection = MySQLIntrospection(self)
+    SchemaEditorClass = MySQLGISSchemaEditor
+    # Classes instantiated in __init__().
+    features_class = DatabaseFeatures
+    introspection_class = MySQLIntrospection
+    ops_class = MySQLOperations

@@ -4,14 +4,35 @@ Performing raw SQL queries
 
 .. currentmodule:: django.db.models
 
-When the :doc:`model query APIs </topics/db/queries>` don't go far enough, you
-can fall back to writing raw SQL. Django gives you two ways of performing raw
-SQL queries: you can use :meth:`Manager.raw()` to `perform raw queries and
-return model instances`__, or you can avoid the model layer entirely and
-`execute custom SQL directly`__.
+Django gives you two ways of performing raw SQL queries: you can use
+:meth:`Manager.raw()` to `perform raw queries and return model instances`__, or
+you can avoid the model layer entirely and `execute custom SQL directly`__.
 
 __ `performing raw queries`_
 __ `executing custom SQL directly`_
+
+.. admonition:: Explore the ORM before using raw SQL!
+
+    The Django ORM provides many tools to express queries without writing raw
+    SQL. For example:
+
+    * The :doc:`QuerySet API </ref/models/querysets>` is extensive.
+    * You can :meth:`annotate <.QuerySet.annotate>` and :doc:`aggregate
+      </topics/db/aggregation>` using many built-in :doc:`database functions
+      </ref/models/database-functions>`. Beyond those, you can create
+      :doc:`custom query expressions </ref/models/expressions/>`.
+
+    Before using raw SQL, explore :doc:`the ORM </topics/db/index>`. Ask on
+    |django-users| or the `#django IRC channel
+    <irc://irc.freenode.net/django>`_ to see if the ORM supports your use case.
+
+.. warning::
+
+    You should be very careful whenever you write raw SQL. Every time you use
+    it, you should properly escape any parameters that the user can control
+    by using ``params`` in order to protect against SQL injection attacks.
+    Please read more about :ref:`SQL injection protection
+    <sql-injection-protection>`.
 
 .. _executing-raw-queries:
 
@@ -23,11 +44,12 @@ return model instances:
 
 .. method:: Manager.raw(raw_query, params=None, translations=None)
 
-This method method takes a raw SQL query, executes it, and returns a
+This method takes a raw SQL query, executes it, and returns a
 ``django.db.models.query.RawQuerySet`` instance. This ``RawQuerySet`` instance
-can be iterated over just like an normal QuerySet to provide object instances.
+can be iterated over like a normal :class:`~django.db.models.query.QuerySet` to
+provide object instances.
 
-This is best illustrated with an example. Suppose you've got the following model::
+This is best illustrated with an example. Suppose you have the following model::
 
     class Person(models.Model):
         first_name = models.CharField(...)
@@ -47,7 +69,7 @@ options that make it very powerful.
 
 .. admonition:: Model table names
 
-    Where'd the name of the ``Person`` table come from in that example?
+    Where did the name of the ``Person`` table come from in that example?
 
     By default, Django figures out a database table name by joining the
     model's "app label" -- the name you used in ``manage.py startapp`` -- to
@@ -65,6 +87,16 @@ options that make it very powerful.
     Django expects that the statement will return a set of rows from the
     database, but does nothing to enforce that. If the query does not
     return rows, a (possibly cryptic) error will result.
+
+.. warning::
+
+    If you are performing queries on MySQL, note that MySQL's silent type coercion
+    may cause unexpected results when mixing types. If you query on a string
+    type column, but with an integer value, MySQL will coerce the types of all values
+    in the table to an integer before performing the comparison. For example, if your
+    table contains the values ``'abc'``, ``'def'`` and you query for ``WHERE mycolumn=0``,
+    both rows will match. To prevent this, perform the correct typecasting
+    before using the value in a query.
 
 Mapping query fields to model fields
 ------------------------------------
@@ -86,7 +118,7 @@ had ``Person`` data in it, you could easily map it into ``Person`` instances::
     >>> Person.objects.raw('''SELECT first AS first_name,
     ...                              last AS last_name,
     ...                              bd AS birth_date,
-    ...                              pk as id,
+    ...                              pk AS id,
     ...                       FROM some_other_table''')
 
 As long as the names match, the model instances will be created correctly.
@@ -105,13 +137,13 @@ Index lookups
 ``raw()`` supports indexing, so if you need only the first result you can
 write::
 
-    >>> first_person = Person.objects.raw('SELECT * from myapp_person')[0]
+    >>> first_person = Person.objects.raw('SELECT * FROM myapp_person')[0]
 
 However, the indexing and slicing are not performed at the database level. If
-you have a big amount of ``Person`` objects in your database, it is more
+you have a large number of ``Person`` objects in your database, it is more
 efficient to limit the query at the SQL level::
 
-    >>> first_person = Person.objects.raw('SELECT * from myapp_person LIMIT 1')[0]
+    >>> first_person = Person.objects.raw('SELECT * FROM myapp_person LIMIT 1')[0]
 
 Deferring model fields
 ----------------------
@@ -138,8 +170,9 @@ last names were both retrieved on demand when they were printed.
 
 There is only one field that you can't leave out - the primary key
 field. Django uses the primary key to identify model instances, so it
-must always be included in a raw query. An ``InvalidQuery`` exception
-will be raised if you forget to include the primary key.
+must always be included in a raw query. A
+:class:`~django.core.exceptions.FieldDoesNotExist` exception will be raised if
+you forget to include the primary key.
 
 Adding annotations
 ------------------
@@ -155,7 +188,10 @@ of people with their ages calculated by the database::
     Jane is 42.
     ...
 
-__ http://www.postgresql.org/docs/current/static/functions-datetime.html
+You can often avoid using raw SQL to compute annotations by instead using a
+:ref:`Func() expression <func-expressions>`.
+
+__ https://www.postgresql.org/docs/current/functions-datetime.html
 
 Passing parameters into ``raw()``
 ---------------------------------
@@ -166,28 +202,42 @@ argument to ``raw()``::
     >>> lname = 'Doe'
     >>> Person.objects.raw('SELECT * FROM myapp_person WHERE last_name = %s', [lname])
 
-``params`` is a list of parameters. You'll use ``%s`` placeholders in the
-query string (regardless of your database engine); they'll be replaced with
-parameters from the ``params`` list.
+``params`` is a list or dictionary of parameters. You'll use ``%s``
+placeholders in the query string for a list, or ``%(key)s``
+placeholders for a dictionary (where ``key`` is replaced by a
+dictionary key, of course), regardless of your database engine.  Such
+placeholders will be replaced with parameters from the ``params``
+argument.
+
+.. note::
+
+   Dictionary params are not supported with the SQLite backend; with
+   this backend, you must pass parameters as a list.
 
 .. warning::
 
-    **Do not use string formatting on raw queries!**
+    **Do not use string formatting on raw queries or quote placeholders in your
+    SQL strings!**
 
     It's tempting to write the above query as::
 
         >>> query = 'SELECT * FROM myapp_person WHERE last_name = %s' % lname
         >>> Person.objects.raw(query)
 
-    **Don't.**
+    You might also think you should write your query like this (with quotes
+    around ``%s``)::
 
-    Using the ``params`` list completely protects you from `SQL injection
-    attacks`__, a common exploit where attackers inject arbitrary SQL into
-    your database. If you use string interpolation, sooner or later you'll
-    fall victim to SQL injection. As long as you remember to always use the
-    ``params`` list you'll be protected.
+        >>> query = "SELECT * FROM myapp_person WHERE last_name = '%s'"
 
-__ http://en.wikipedia.org/wiki/SQL_injection
+    **Don't make either of these mistakes.**
+
+    As discussed in :ref:`sql-injection-protection`, using the ``params``
+    argument and leaving the placeholders unquoted protects you from `SQL
+    injection attacks`__, a common exploit where attackers inject arbitrary
+    SQL into your database. If you use string interpolation or quote the
+    placeholder, you're at risk for SQL injection.
+
+__ https://en.wikipedia.org/wiki/SQL_injection
 
 .. _executing-custom-sql:
 
@@ -211,27 +261,22 @@ For example::
 
     from django.db import connection
 
-    def my_custom_sql():
-        cursor = connection.cursor()
-
-        cursor.execute("UPDATE bar SET foo = 1 WHERE baz = %s", [self.baz])
-
-        cursor.execute("SELECT foo FROM bar WHERE baz = %s", [self.baz])
-        row = cursor.fetchone()
+    def my_custom_sql(self):
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE bar SET foo = 1 WHERE baz = %s", [self.baz])
+            cursor.execute("SELECT foo FROM bar WHERE baz = %s", [self.baz])
+            row = cursor.fetchone()
 
         return row
 
-.. versionchanged:: 1.6
-    In Django 1.5 and earlier, after performing a data changing operation, you
-    had to call ``transaction.commit_unless_managed()`` to ensure your changes
-    were committed to the database. Since Django now defaults to database-level
-    autocommit, this isn't necessary any longer.
+To protect against SQL injection, you must not include quotes around the ``%s``
+placeholders in the SQL string.
 
 Note that if you want to include literal percent signs in the query, you have to
 double them in the case you are passing parameters::
 
      cursor.execute("SELECT foo FROM bar WHERE baz = '30%'")
-     cursor.execute("SELECT foo FROM bar WHERE baz = '30%%' and id = %s", [self.id])
+     cursor.execute("SELECT foo FROM bar WHERE baz = '30%%' AND id = %s", [self.id])
 
 If you are using :doc:`more than one database </topics/db/multi-db>`, you can
 use ``django.db.connections`` to obtain the connection (and cursor) for a
@@ -240,31 +285,53 @@ object that allows you to retrieve a specific connection using its
 alias::
 
     from django.db import connections
-    cursor = connections['my_db_alias'].cursor()
-    # Your code here...
+    with connections['my_db_alias'].cursor() as cursor:
+        # Your code here...
 
-By default, the Python DB API will return results without their field
-names, which means you end up with a ``list`` of values, rather than a
-``dict``. At a small performance cost, you can return results as a
-``dict`` by using something like this::
+By default, the Python DB API will return results without their field names,
+which means you end up with a ``list`` of values, rather than a ``dict``. At a
+small performance and memory cost, you can return results as a ``dict`` by
+using something like this::
 
     def dictfetchall(cursor):
-        "Returns all rows from a cursor as a dict"
-        desc = cursor.description
+        "Return all rows from a cursor as a dict"
+        columns = [col[0] for col in cursor.description]
         return [
-            dict(zip([col[0] for col in desc], row))
+            dict(zip(columns, row))
             for row in cursor.fetchall()
         ]
 
-Here is an example of the difference between the two::
+Another option is to use :func:`collections.namedtuple` from the Python
+standard library. A ``namedtuple`` is a tuple-like object that has fields
+accessible by attribute lookup; it's also indexable and iterable. Results are
+immutable and accessible by field names or indices, which might be useful::
 
-    >>> cursor.execute("SELECT id, parent_id from test LIMIT 2");
+    from collections import namedtuple
+
+    def namedtuplefetchall(cursor):
+        "Return all rows from a cursor as a namedtuple"
+        desc = cursor.description
+        nt_result = namedtuple('Result', [col[0] for col in desc])
+        return [nt_result(*row) for row in cursor.fetchall()]
+
+Here is an example of the difference between the three::
+
+    >>> cursor.execute("SELECT id, parent_id FROM test LIMIT 2");
     >>> cursor.fetchall()
-    ((54360982L, None), (54360880L, None))
+    ((54360982, None), (54360880, None))
 
-    >>> cursor.execute("SELECT id, parent_id from test LIMIT 2");
+    >>> cursor.execute("SELECT id, parent_id FROM test LIMIT 2");
     >>> dictfetchall(cursor)
-    [{'parent_id': None, 'id': 54360982L}, {'parent_id': None, 'id': 54360880L}]
+    [{'parent_id': None, 'id': 54360982}, {'parent_id': None, 'id': 54360880}]
+
+    >>> cursor.execute("SELECT id, parent_id FROM test LIMIT 2");
+    >>> results = namedtuplefetchall(cursor)
+    >>> results
+    [Result(id=54360982, parent_id=None), Result(id=54360880, parent_id=None)]
+    >>> results[0].id
+    54360982
+    >>> results[0][0]
+    54360982
 
 Connections and cursors
 -----------------------
@@ -281,3 +348,44 @@ database library will automatically escape your parameters as necessary.
 Also note that Django expects the ``"%s"`` placeholder, *not* the ``"?"``
 placeholder, which is used by the SQLite Python bindings. This is for the sake
 of consistency and sanity.
+
+Using a cursor as a context manager::
+
+    with connection.cursor() as c:
+        c.execute(...)
+
+is equivalent to::
+
+    c = connection.cursor()
+    try:
+        c.execute(...)
+    finally:
+        c.close()
+
+Calling stored procedures
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. method:: CursorWrapper.callproc(procname, params=None, kparams=None)
+
+    Calls a database stored procedure with the given name. A sequence
+    (``params``) or dictionary (``kparams``) of input parameters may be
+    provided. Most databases don't support ``kparams``. Of Django's built-in
+    backends, only Oracle supports it.
+
+    For example, given this stored procedure in an Oracle database:
+
+    .. code-block:: sql
+
+        CREATE PROCEDURE "TEST_PROCEDURE"(v_i INTEGER, v_text NVARCHAR2(10)) AS
+            p_i INTEGER;
+            p_text NVARCHAR2(10);
+        BEGIN
+            p_i := v_i;
+            p_text := v_text;
+            ...
+        END;
+
+    This will call it::
+
+        with connection.cursor() as cursor:
+            cursor.callproc('test_procedure', [1, 'test'])

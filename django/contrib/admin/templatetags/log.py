@@ -3,6 +3,7 @@ from django.contrib.admin.models import LogEntry
 
 register = template.Library()
 
+
 class AdminLogNode(template.Node):
     def __init__(self, limit, varname, user):
         self.limit, self.varname, self.user = limit, varname, user
@@ -12,18 +13,20 @@ class AdminLogNode(template.Node):
 
     def render(self, context):
         if self.user is None:
-            context[self.varname] = LogEntry.objects.all().select_related('content_type', 'user')[:self.limit]
+            entries = LogEntry.objects.all()
         else:
             user_id = self.user
             if not user_id.isdigit():
                 user_id = context[self.user].pk
-            context[self.varname] = LogEntry.objects.filter(user__pk__exact=user_id).select_related('content_type', 'user')[:int(self.limit)]
+            entries = LogEntry.objects.filter(user__pk=user_id)
+        context[self.varname] = entries.select_related('content_type', 'user')[:int(self.limit)]
         return ''
+
 
 @register.tag
 def get_admin_log(parser, token):
     """
-    Populates a template variable with the admin log for the given criteria.
+    Populate a template variable with the admin log for the given criteria.
 
     Usage::
 
@@ -53,4 +56,4 @@ def get_admin_log(parser, token):
         if tokens[4] != 'for_user':
             raise template.TemplateSyntaxError(
                 "Fourth argument to 'get_admin_log' must be 'for_user'")
-    return AdminLogNode(limit=tokens[1], varname=tokens[3], user=(len(tokens) > 5 and tokens[5] or None))
+    return AdminLogNode(limit=tokens[1], varname=tokens[3], user=(tokens[5] if len(tokens) > 5 else None))

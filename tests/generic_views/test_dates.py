@@ -1,40 +1,42 @@
-from __future__ import absolute_import
-
-import time
 import datetime
+from unittest import mock
 
 from django.core.exceptions import ImproperlyConfigured
-from django.test import TestCase, skipUnlessDBFeature
-from django.test.utils import override_settings
+from django.test import TestCase, override_settings, skipUnlessDBFeature
+from django.test.utils import requires_tz_support
 from django.utils import timezone
-from django.utils.unittest import skipUnless
 
-from .models import Book, BookSigning
-
-TZ_SUPPORT = hasattr(time, 'tzset')
-
-# On OSes that don't provide tzset (Windows), we can't set the timezone
-# in which the program runs. As a consequence, we must skip tests that
-# don't enforce a specific timezone (with timezone.override or equivalent),
-# or attempt to interpret naive datetimes in the default timezone.
-
-requires_tz_support = skipUnless(TZ_SUPPORT,
-        "This test relies on the ability to run a program in an arbitrary "
-        "time zone, but your operating system isn't able to do that.")
+from .models import Artist, Author, Book, BookSigning, Page
 
 
 def _make_books(n, base_date):
     for i in range(n):
-        b = Book.objects.create(
+        Book.objects.create(
             name='Book %d' % i,
             slug='book-%d' % i,
-            pages=100+i,
+            pages=100 + i,
             pubdate=base_date - datetime.timedelta(days=i))
 
-class ArchiveIndexViewTests(TestCase):
-    fixtures = ['generic-views-test-data.json']
-    urls = 'generic_views.urls'
 
+class TestDataMixin:
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.artist1 = Artist.objects.create(name='Rene Magritte')
+        cls.author1 = Author.objects.create(name='Roberto Bolaño', slug='roberto-bolano')
+        cls.author2 = Author.objects.create(name='Scott Rosenberg', slug='scott-rosenberg')
+        cls.book1 = Book.objects.create(name='2066', slug='2066', pages=800, pubdate=datetime.date(2008, 10, 1))
+        cls.book1.authors.add(cls.author1)
+        cls.book2 = Book.objects.create(
+            name='Dreaming in Code', slug='dreaming-in-code', pages=300, pubdate=datetime.date(2006, 5, 1)
+        )
+        cls.page1 = Page.objects.create(
+            content='I was once bitten by a moose.', template='generic_views/page_template.html'
+        )
+
+
+@override_settings(ROOT_URLCONF='generic_views.urls')
+class ArchiveIndexViewTests(TestDataMixin, TestCase):
 
     def test_archive_view(self):
         res = self.client.get('/dates/books/')
@@ -48,7 +50,7 @@ class ArchiveIndexViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(list(res.context['date_list']), list(Book.objects.dates('pubdate', 'year', 'DESC')))
         self.assertEqual(list(res.context['thingies']), list(Book.objects.all()))
-        self.assertFalse('latest' in res.context)
+        self.assertNotIn('latest', res.context)
         self.assertTemplateUsed(res, 'generic_views/book_archive.html')
 
     def test_empty_archive_view(self):
@@ -78,7 +80,12 @@ class ArchiveIndexViewTests(TestCase):
         self.assertTemplateUsed(res, 'generic_views/book_detail.html')
 
     def test_archive_view_invalid(self):
-        self.assertRaises(ImproperlyConfigured, self.client.get, '/dates/books/invalid/')
+        msg = (
+            'BookArchive is missing a QuerySet. Define BookArchive.model, '
+            'BookArchive.queryset, or override BookArchive.get_queryset().'
+        )
+        with self.assertRaisesMessage(ImproperlyConfigured, msg):
+            self.client.get('/dates/books/invalid/')
 
     def test_archive_view_by_month(self):
         res = self.client.get('/dates/books/by_month/')
@@ -133,10 +140,30 @@ class ArchiveIndexViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(list(res.context['date_list']), list(reversed(sorted(res.context['date_list']))))
 
+    def test_archive_view_custom_sorting(self):
+        Book.objects.create(name="Zebras for Dummies", pages=600, pubdate=datetime.date(2007, 5, 1))
+        res = self.client.get('/dates/books/sortedbyname/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['date_list']), list(Book.objects.dates('pubdate', 'year', 'DESC')))
+        self.assertEqual(list(res.context['latest']), list(Book.objects.order_by('name').all()))
+        self.assertTemplateUsed(res, 'generic_views/book_archive.html')
 
-class YearArchiveViewTests(TestCase):
-    fixtures = ['generic-views-test-data.json']
-    urls = 'generic_views.urls'
+    def test_archive_view_custom_sorting_dec(self):
+        Book.objects.create(name="Zebras for Dummies", pages=600, pubdate=datetime.date(2007, 5, 1))
+        res = self.client.get('/dates/books/sortedbynamedec/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['date_list']), list(Book.objects.dates('pubdate', 'year', 'DESC')))
+        self.assertEqual(list(res.context['latest']), list(Book.objects.order_by('-name').all()))
+        self.assertTemplateUsed(res, 'generic_views/book_archive.html')
+
+    def test_archive_view_without_date_field(self):
+        msg = 'BookArchiveWithoutDateField.date_field is required.'
+        with self.assertRaisesMessage(ImproperlyConfigured, msg):
+            self.client.get('/dates/books/without_date_field/')
+
+
+@override_settings(ROOT_URLCONF='generic_views.urls')
+class YearArchiveViewTests(TestDataMixin, TestCase):
 
     def test_year_view(self):
         res = self.client.get('/dates/books/2008/')
@@ -146,7 +173,7 @@ class YearArchiveViewTests(TestCase):
         self.assertTemplateUsed(res, 'generic_views/book_archive_year.html')
 
         # Since allow_empty=False, next/prev years must be valid (#7164)
-        self.assertEqual(res.context['next_year'], None)
+        self.assertIsNone(res.context['next_year'])
         self.assertEqual(res.context['previous_year'], datetime.date(2006, 1, 1))
 
     def test_year_view_make_object_list(self):
@@ -172,7 +199,7 @@ class YearArchiveViewTests(TestCase):
     def test_year_view_allow_future(self):
         # Create a new book in the future
         year = datetime.date.today().year + 1
-        b = Book.objects.create(name="The New New Testement", pages=600, pubdate=datetime.date(year, 1, 1))
+        Book.objects.create(name="The New New Testement", pages=600, pubdate=datetime.date(year, 1, 1))
         res = self.client.get('/dates/books/%s/' % year)
         self.assertEqual(res.status_code, 404)
 
@@ -189,6 +216,41 @@ class YearArchiveViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__year=2006)))
         self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__year=2006)))
+        self.assertTemplateUsed(res, 'generic_views/book_archive_year.html')
+
+    def test_year_view_custom_sort_order(self):
+        # Zebras comes after Dreaming by name, but before on '-pubdate' which is the default sorting
+        Book.objects.create(name="Zebras for Dummies", pages=600, pubdate=datetime.date(2006, 9, 1))
+        res = self.client.get('/dates/books/2006/sortedbyname/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['date_list']), [datetime.date(2006, 5, 1), datetime.date(2006, 9, 1)])
+        self.assertEqual(
+            list(res.context['book_list']),
+            list(Book.objects.filter(pubdate__year=2006).order_by('name'))
+        )
+        self.assertEqual(
+            list(res.context['object_list']),
+            list(Book.objects.filter(pubdate__year=2006).order_by('name'))
+        )
+        self.assertTemplateUsed(res, 'generic_views/book_archive_year.html')
+
+    def test_year_view_two_custom_sort_orders(self):
+        Book.objects.create(name="Zebras for Dummies", pages=300, pubdate=datetime.date(2006, 9, 1))
+        Book.objects.create(name="Hunting Hippos", pages=400, pubdate=datetime.date(2006, 3, 1))
+        res = self.client.get('/dates/books/2006/sortedbypageandnamedec/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(
+            list(res.context['date_list']),
+            [datetime.date(2006, 3, 1), datetime.date(2006, 5, 1), datetime.date(2006, 9, 1)]
+        )
+        self.assertEqual(
+            list(res.context['book_list']),
+            list(Book.objects.filter(pubdate__year=2006).order_by('pages', '-name'))
+        )
+        self.assertEqual(
+            list(res.context['object_list']),
+            list(Book.objects.filter(pubdate__year=2006).order_by('pages', '-name'))
+        )
         self.assertTemplateUsed(res, 'generic_views/book_archive_year.html')
 
     def test_year_view_invalid_pattern(self):
@@ -218,10 +280,30 @@ class YearArchiveViewTests(TestCase):
         res = self.client.get('/dates/books/2011/')
         self.assertEqual(list(res.context['date_list']), list(sorted(res.context['date_list'])))
 
+    @mock.patch('django.views.generic.list.MultipleObjectMixin.get_context_data')
+    def test_get_context_data_receives_extra_context(self, mock):
+        """
+        MultipleObjectMixin.get_context_data() receives the context set by
+        BaseYearArchiveView.get_dated_items(). This behavior is implemented in
+        BaseDateListView.get().
+        """
+        BookSigning.objects.create(event_date=datetime.datetime(2008, 4, 2, 12, 0))
+        with self.assertRaisesMessage(TypeError, 'context must be a dict rather than MagicMock.'):
+            self.client.get('/dates/booksignings/2008/')
+        args, kwargs = mock.call_args
+        # These are context values from get_dated_items().
+        self.assertEqual(kwargs['year'], datetime.date(2008, 1, 1))
+        self.assertIsNone(kwargs['previous_year'])
+        self.assertIsNone(kwargs['next_year'])
 
-class MonthArchiveViewTests(TestCase):
-    fixtures = ['generic-views-test-data.json']
-    urls = 'generic_views.urls'
+    def test_get_dated_items_not_implemented(self):
+        msg = 'A DateView must provide an implementation of get_dated_items()'
+        with self.assertRaisesMessage(NotImplementedError, msg):
+            self.client.get('/BaseDateListViewTest/')
+
+
+@override_settings(ROOT_URLCONF='generic_views.urls')
+class MonthArchiveViewTests(TestDataMixin, TestCase):
 
     def test_month_view(self):
         res = self.client.get('/dates/books/2008/oct/')
@@ -233,7 +315,7 @@ class MonthArchiveViewTests(TestCase):
         self.assertEqual(res.context['month'], datetime.date(2008, 10, 1))
 
         # Since allow_empty=False, next/prev months must be valid (#7164)
-        self.assertEqual(res.context['next_month'], None)
+        self.assertIsNone(res.context['next_month'])
         self.assertEqual(res.context['previous_month'], datetime.date(2006, 5, 1))
 
     def test_month_view_allow_empty(self):
@@ -256,7 +338,7 @@ class MonthArchiveViewTests(TestCase):
         url = datetime.date.today().strftime('/dates/books/%Y/%b/allow_empty/').lower()
         res = self.client.get(url)
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['next_month'], None)
+        self.assertIsNone(res.context['next_month'])
 
     def test_month_view_allow_future(self):
         future = (datetime.date.today() + datetime.timedelta(days=60)).replace(day=1)
@@ -276,7 +358,7 @@ class MonthArchiveViewTests(TestCase):
 
         # Since allow_future = True but not allow_empty, next/prev are not
         # allowed to be empty months (#7164)
-        self.assertEqual(res.context['next_month'], None)
+        self.assertIsNone(res.context['next_month'])
         self.assertEqual(res.context['previous_month'], datetime.date(2008, 10, 1))
 
         # allow_future, but not allow_empty, with a current month. So next
@@ -289,8 +371,14 @@ class MonthArchiveViewTests(TestCase):
     def test_month_view_paginated(self):
         res = self.client.get('/dates/books/2008/oct/paginated/')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10)))
-        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10)))
+        self.assertEqual(
+            list(res.context['book_list']),
+            list(Book.objects.filter(pubdate__year=2008, pubdate__month=10))
+        )
+        self.assertEqual(
+            list(res.context['object_list']),
+            list(Book.objects.filter(pubdate__year=2008, pubdate__month=10))
+        )
         self.assertTemplateUsed(res, 'generic_views/book_archive_month.html')
 
     def test_custom_month_format(self):
@@ -305,7 +393,7 @@ class MonthArchiveViewTests(TestCase):
         "Content can exist on any day of the previous month. Refs #14711"
         self.pubdate_list = [
             datetime.date(2010, month, day)
-            for month,day in ((9,1), (10,2), (11,3))
+            for month, day in ((9, 1), (10, 2), (11, 3))
         ]
         for pubdate in self.pubdate_list:
             name = str(pubdate)
@@ -313,15 +401,15 @@ class MonthArchiveViewTests(TestCase):
 
         res = self.client.get('/dates/books/2010/nov/allow_empty/')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['previous_month'], datetime.date(2010,10,1))
+        self.assertEqual(res.context['previous_month'], datetime.date(2010, 10, 1))
         # The following test demonstrates the bug
         res = self.client.get('/dates/books/2010/nov/')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['previous_month'], datetime.date(2010,10,1))
+        self.assertEqual(res.context['previous_month'], datetime.date(2010, 10, 1))
         # The bug does not occur here because a Book with pubdate of Sep 1 exists
         res = self.client.get('/dates/books/2010/oct/')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['previous_month'], datetime.date(2010,9,1))
+        self.assertEqual(res.context['previous_month'], datetime.date(2010, 9, 1))
 
     def test_datetime_month_view(self):
         BookSigning.objects.create(event_date=datetime.datetime(2008, 2, 1, 12, 0))
@@ -329,6 +417,20 @@ class MonthArchiveViewTests(TestCase):
         BookSigning.objects.create(event_date=datetime.datetime(2008, 6, 3, 12, 0))
         res = self.client.get('/dates/booksignings/2008/apr/')
         self.assertEqual(res.status_code, 200)
+
+    def test_month_view_get_month_from_request(self):
+        oct1 = datetime.date(2008, 10, 1)
+        res = self.client.get('/dates/books/without_month/2008/?month=oct')
+        self.assertEqual(res.status_code, 200)
+        self.assertTemplateUsed(res, 'generic_views/book_archive_month.html')
+        self.assertEqual(list(res.context['date_list']), [oct1])
+        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate=oct1)))
+        self.assertEqual(res.context['month'], oct1)
+
+    def test_month_view_without_month_in_url(self):
+        res = self.client.get('/dates/books/without_month/2008/')
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(res.context['exception'], 'No month specified')
 
     @skipUnlessDBFeature('has_zoneinfo_database')
     @override_settings(USE_TZ=True, TIME_ZONE='Africa/Nairobi')
@@ -346,9 +448,8 @@ class MonthArchiveViewTests(TestCase):
         self.assertEqual(list(res.context['date_list']), list(sorted(res.context['date_list'])))
 
 
-class WeekArchiveViewTests(TestCase):
-    fixtures = ['generic-views-test-data.json']
-    urls = 'generic_views.urls'
+@override_settings(ROOT_URLCONF='generic_views.urls')
+class WeekArchiveViewTests(TestDataMixin, TestCase):
 
     def test_week_view(self):
         res = self.client.get('/dates/books/2008/week/39/')
@@ -358,7 +459,7 @@ class WeekArchiveViewTests(TestCase):
         self.assertEqual(res.context['week'], datetime.date(2008, 9, 28))
 
         # Since allow_empty=False, next/prev weeks must be valid
-        self.assertEqual(res.context['next_week'], None)
+        self.assertIsNone(res.context['next_week'])
         self.assertEqual(res.context['previous_week'], datetime.date(2006, 4, 30))
 
     def test_week_view_allow_empty(self):
@@ -380,7 +481,7 @@ class WeekArchiveViewTests(TestCase):
         url = datetime.date.today().strftime('/dates/books/%Y/week/%U/allow_empty/').lower()
         res = self.client.get(url)
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['next_week'], None)
+        self.assertIsNone(res.context['next_week'])
 
     def test_week_view_allow_future(self):
         # January 7th always falls in week 1, given Python's definition of week numbers
@@ -398,7 +499,7 @@ class WeekArchiveViewTests(TestCase):
 
         # Since allow_future = True but not allow_empty, next/prev are not
         # allowed to be empty weeks
-        self.assertEqual(res.context['next_week'], None)
+        self.assertIsNone(res.context['next_week'])
         self.assertEqual(res.context['previous_week'], datetime.date(2008, 9, 28))
 
         # allow_future, but not allow_empty, with a current week. So next
@@ -413,8 +514,14 @@ class WeekArchiveViewTests(TestCase):
         week_end = week_start + datetime.timedelta(days=7)
         res = self.client.get('/dates/books/2008/week/39/')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__gte=week_start, pubdate__lt=week_end)))
-        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__gte=week_start, pubdate__lt=week_end)))
+        self.assertEqual(
+            list(res.context['book_list']),
+            list(Book.objects.filter(pubdate__gte=week_start, pubdate__lt=week_end))
+        )
+        self.assertEqual(
+            list(res.context['object_list']),
+            list(Book.objects.filter(pubdate__gte=week_start, pubdate__lt=week_end))
+        )
         self.assertTemplateUsed(res, 'generic_views/book_archive_week.html')
 
     def test_week_view_invalid_pattern(self):
@@ -431,6 +538,10 @@ class WeekArchiveViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.context['week'], datetime.date(2008, 9, 29))
 
+    def test_unknown_week_format(self):
+        with self.assertRaisesMessage(ValueError, "Unknown week format '%T'. Choices are: %U, %W"):
+            self.client.get('/dates/books/2008/week/39/unknown_week_format/')
+
     def test_datetime_week_view(self):
         BookSigning.objects.create(event_date=datetime.datetime(2008, 4, 2, 12, 0))
         res = self.client.get('/dates/booksignings/2008/week/13/')
@@ -443,9 +554,8 @@ class WeekArchiveViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
 
 
-class DayArchiveViewTests(TestCase):
-    fixtures = ['generic-views-test-data.json']
-    urls = 'generic_views.urls'
+@override_settings(ROOT_URLCONF='generic_views.urls')
+class DayArchiveViewTests(TestDataMixin, TestCase):
 
     def test_day_view(self):
         res = self.client.get('/dates/books/2008/oct/01/')
@@ -456,7 +566,7 @@ class DayArchiveViewTests(TestCase):
         self.assertEqual(res.context['day'], datetime.date(2008, 10, 1))
 
         # Since allow_empty=False, next/prev days must be valid.
-        self.assertEqual(res.context['next_day'], None)
+        self.assertIsNone(res.context['next_day'])
         self.assertEqual(res.context['previous_day'], datetime.date(2006, 5, 1))
 
     def test_day_view_allow_empty(self):
@@ -478,7 +588,7 @@ class DayArchiveViewTests(TestCase):
         url = datetime.date.today().strftime('/dates/books/%Y/%b/%d/allow_empty/').lower()
         res = self.client.get(url)
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['next_day'], None)
+        self.assertIsNone(res.context['next_day'])
 
     def test_day_view_allow_future(self):
         future = (datetime.date.today() + datetime.timedelta(days=60))
@@ -496,7 +606,7 @@ class DayArchiveViewTests(TestCase):
         self.assertEqual(res.context['day'], future)
 
         # allow_future but not allow_empty, next/prev must be valid
-        self.assertEqual(res.context['next_day'], None)
+        self.assertIsNone(res.context['next_day'])
         self.assertEqual(res.context['previous_day'], datetime.date(2008, 10, 1))
 
         # allow_future, but not allow_empty, with a current month.
@@ -515,13 +625,19 @@ class DayArchiveViewTests(TestCase):
     def test_day_view_paginated(self):
         res = self.client.get('/dates/books/2008/oct/1/')
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10, pubdate__day=1)))
-        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10, pubdate__day=1)))
+        self.assertEqual(
+            list(res.context['book_list']),
+            list(Book.objects.filter(pubdate__year=2008, pubdate__month=10, pubdate__day=1))
+        )
+        self.assertEqual(
+            list(res.context['object_list']),
+            list(Book.objects.filter(pubdate__year=2008, pubdate__month=10, pubdate__day=1))
+        )
         self.assertTemplateUsed(res, 'generic_views/book_archive_day.html')
 
     def test_next_prev_context(self):
         res = self.client.get('/dates/books/2008/oct/01/')
-        self.assertEqual(res.content, b"Archive for Oct. 1, 2008. Previous day is May 1, 2006")
+        self.assertEqual(res.content, b"Archive for Oct. 1, 2008. Previous day is May 1, 2006\n")
 
     def test_custom_month_format(self):
         res = self.client.get('/dates/books/2008/10/01/')
@@ -561,15 +677,14 @@ class DayArchiveViewTests(TestCase):
         self.assertEqual(res.status_code, 404)
 
 
-class DateDetailViewTests(TestCase):
-    fixtures = ['generic-views-test-data.json']
-    urls = 'generic_views.urls'
+@override_settings(ROOT_URLCONF='generic_views.urls')
+class DateDetailViewTests(TestDataMixin, TestCase):
 
     def test_date_detail_by_pk(self):
-        res = self.client.get('/dates/books/2008/oct/01/1/')
+        res = self.client.get('/dates/books/2008/oct/01/%s/' % self.book1.pk)
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['object'], Book.objects.get(pk=1))
-        self.assertEqual(res.context['book'], Book.objects.get(pk=1))
+        self.assertEqual(res.context['object'], self.book1)
+        self.assertEqual(res.context['book'], self.book1)
         self.assertTemplateUsed(res, 'generic_views/book_detail.html')
 
     def test_date_detail_by_slug(self):
@@ -578,9 +693,9 @@ class DateDetailViewTests(TestCase):
         self.assertEqual(res.context['book'], Book.objects.get(slug='dreaming-in-code'))
 
     def test_date_detail_custom_month_format(self):
-        res = self.client.get('/dates/books/2008/10/01/1/')
+        res = self.client.get('/dates/books/2008/10/01/%s/' % self.book1.pk)
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['book'], Book.objects.get(pk=1))
+        self.assertEqual(res.context['book'], self.book1)
 
     def test_date_detail_allow_future(self):
         future = (datetime.date.today() + datetime.timedelta(days=60))
@@ -595,25 +710,45 @@ class DateDetailViewTests(TestCase):
         self.assertEqual(res.context['book'], b)
         self.assertTemplateUsed(res, 'generic_views/book_detail.html')
 
+    def test_year_out_of_range(self):
+        urls = [
+            '/dates/books/9999/',
+            '/dates/books/9999/12/',
+            '/dates/books/9999/week/52/',
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                res = self.client.get(url)
+                self.assertEqual(res.status_code, 404)
+                self.assertEqual(res.context['exception'], 'Date out of range')
+
     def test_invalid_url(self):
-        self.assertRaises(AttributeError, self.client.get, "/dates/books/2008/oct/01/nopk/")
+        msg = (
+            'Generic detail view BookDetail must be called with either an '
+            'object pk or a slug in the URLconf.'
+        )
+        with self.assertRaisesMessage(AttributeError, msg):
+            self.client.get("/dates/books/2008/oct/01/nopk/")
 
     def test_get_object_custom_queryset(self):
         """
-        Ensure that custom querysets are used when provided to
-        BaseDateDetailView.get_object()
-        Refs #16918.
+        Custom querysets are used when provided to
+        BaseDateDetailView.get_object().
         """
         res = self.client.get(
-            '/dates/books/get_object_custom_queryset/2006/may/01/2/')
+            '/dates/books/get_object_custom_queryset/2006/may/01/%s/' % self.book2.pk)
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.context['object'], Book.objects.get(pk=2))
-        self.assertEqual(res.context['book'], Book.objects.get(pk=2))
+        self.assertEqual(res.context['object'], self.book2)
+        self.assertEqual(res.context['book'], self.book2)
         self.assertTemplateUsed(res, 'generic_views/book_detail.html')
 
         res = self.client.get(
-            '/dates/books/get_object_custom_queryset/2008/oct/01/1/')
+            '/dates/books/get_object_custom_queryset/2008/oct/01/9999999/')
         self.assertEqual(res.status_code, 404)
+
+    def test_get_object_custom_queryset_numqueries(self):
+        with self.assertNumQueries(1):
+            self.client.get('/dates/books/get_object_custom_queryset/2006/may/01/2/')
 
     def test_datetime_date_detail(self):
         bs = BookSigning.objects.create(event_date=datetime.datetime(2008, 4, 2, 12, 0))

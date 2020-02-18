@@ -2,13 +2,13 @@
 
 {%- macro secondnav() %}
   {%- if prev %}
-    &laquo; <a href="{{ prev.link|e }}" title="{{ prev.title|e }}">previous</a> 
+    &laquo; <a href="{{ prev.link|e }}" title="{{ prev.title|e }}">previous</a>
     {{ reldelim2 }}
   {%- endif %}
   {%- if parents %}
-    <a href="{{ parents.0.link|e }}" title="{{ parents.0.title|e }}" accesskey="U">up</a> 
+    <a href="{{ parents.0.link|e }}" title="{{ parents.0.title|e }}" accesskey="U">up</a>
   {%- else %}
-    <a title="{{ docstitle }}" href="{{ pathto('index') }}" accesskey="U">up</a> 
+    <a title="{{ docstitle }}" href="{{ pathto('index') }}" accesskey="U">up</a>
   {%- endif %}
   {%- if next %}
   {{ reldelim2 }}
@@ -17,9 +17,12 @@
 {%- endmacro %}
 
 {% block extrahead %}
+{# When building htmlhelp (CHM format) disable jQuery inclusion, #}
+{# as it causes problems in compiled CHM files.                  #}
+{% if builder != "htmlhelp" %}
 {{ super() }}
-<script type="text/javascript" src="{{ pathto('templatebuiltins.js', 1) }}"></script>
-<script type="text/javascript">
+<script src="{{ pathto('templatebuiltins.js', 1) }}"></script>
+<script>
 (function($) {
     if (!django_template_builtins) {
        // templatebuiltins.js missing, do nothing.
@@ -50,7 +53,27 @@
         });
     });
 })(jQuery);
+{%- if include_console_assets -%}
+(function($) {
+    $(document).ready(function() {
+        $(".c-tab-unix").on("click", function() {
+            $("section.c-content-unix").show();
+            $("section.c-content-win").hide();
+            $(".c-tab-unix").prop("checked", true);
+        });
+        $(".c-tab-win").on("click", function() {
+            $("section.c-content-win").show();
+            $("section.c-content-unix").hide();
+            $(".c-tab-win").prop("checked", true);
+        });
+    });
+})(jQuery);
+{%- endif -%}
 </script>
+{% endif %}
+{%- if include_console_assets -%}
+<link rel="stylesheet" href="{{ pathto('_static/console-tabs.css', 1) }}" type="text/css" />
+{%- endif -%}
 {% endblock %}
 
 {% block document %}
@@ -65,13 +88,13 @@
       </div>
       <div class="nav">{{ secondnav() }}</div>
     </div>
-    
+
     <div id="bd">
       <div id="yui-main">
         <div class="yui-b">
           <div class="yui-g" id="{{ pagename|replace('/', '-') }}">
             {% block body %}{% endblock %}
-          </div>         
+          </div>
         </div>
       </div>
       {% block sidebarwrapper %}
@@ -82,11 +105,11 @@
               <h3>Last update:</h3>
               <p class="topless">{{ last_updated }}</p>
             {%- endif %}
-          </div> 
+          </div>
         {% endif %}
       {% endblock %}
     </div>
-    
+
     <div id="ft">
       <div class="nav">{{ secondnav() }}</div>
     </div>
@@ -113,7 +136,7 @@
         <ul><li>{{ title }}</li></ul>
         {% for p in parents %}</li></ul>{% endfor %}
       </li>
-  </ul>  
+  </ul>
 {% endblock %}
 
 {# Empty some default blocks out #}

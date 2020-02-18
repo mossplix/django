@@ -1,14 +1,15 @@
-import re
-
-from django.utils.text import compress_sequence, compress_string
 from django.utils.cache import patch_vary_headers
+from django.utils.deprecation import MiddlewareMixin
+from django.utils.regex_helper import _lazy_re_compile
+from django.utils.text import compress_sequence, compress_string
 
-re_accepts_gzip = re.compile(r'\bgzip\b')
+re_accepts_gzip = _lazy_re_compile(r'\bgzip\b')
 
-class GZipMiddleware(object):
+
+class GZipMiddleware(MiddlewareMixin):
     """
-    This middleware compresses content if the browser allows gzip compression.
-    It sets the Vary header accordingly, so that caches will base their storage
+    Compress content if the browser allows gzip compression.
+    Set the Vary header accordingly, so that caches will base their storage
     on the Accept-Encoding header.
     """
     def process_response(self, request, response):
@@ -16,17 +17,11 @@ class GZipMiddleware(object):
         if not response.streaming and len(response.content) < 200:
             return response
 
-        patch_vary_headers(response, ('Accept-Encoding',))
-
         # Avoid gzipping if we've already got a content-encoding.
         if response.has_header('Content-Encoding'):
             return response
 
-        # MSIE have issues with gzipped response of various content types.
-        if "msie" in request.META.get('HTTP_USER_AGENT', '').lower():
-            ctype = response.get('Content-Type', '').lower()
-            if not ctype.startswith("text/") or "javascript" in ctype:
-                return response
+        patch_vary_headers(response, ('Accept-Encoding',))
 
         ae = request.META.get('HTTP_ACCEPT_ENCODING', '')
         if not re_accepts_gzip.search(ae):
@@ -45,8 +40,12 @@ class GZipMiddleware(object):
             response.content = compressed_content
             response['Content-Length'] = str(len(response.content))
 
-        if response.has_header('ETag'):
-            response['ETag'] = re.sub('"$', ';gzip"', response['ETag'])
+        # If there is a strong ETag, make it weak to fulfill the requirements
+        # of RFC 7232 section-2.1 while also allowing conditional request
+        # matches on ETags.
+        etag = response.get('ETag')
+        if etag and etag.startswith('"'):
+            response['ETag'] = 'W/' + etag
         response['Content-Encoding'] = 'gzip'
 
         return response

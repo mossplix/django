@@ -1,7 +1,6 @@
-from __future__ import absolute_import, unicode_literals
+from django.contrib.contenttypes import views
+from django.urls import re_path
 
-from django.conf.urls import patterns
-
-urlpatterns = patterns('',
-    (r'^shortcut/(\d+)/(.*)/$', 'django.contrib.contenttypes.views.shortcut'),
-)
+urlpatterns = [
+    re_path(r'^shortcut/([0-9]+)/(.*)/$', views.shortcut),
+]

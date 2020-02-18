@@ -1,11 +1,9 @@
 # Unit tests for typecast functions in django.db.backends.util
 
 import datetime
+import unittest
 
-from django.db.backends import util as typecasts
-from django.utils import six
-from django.utils import unittest
-
+from django.db.backends import utils as typecasts
 
 TEST_CASES = {
     'typecast_date': (
@@ -28,6 +26,9 @@ TEST_CASES = {
         ('00:00:12', datetime.time(0, 0, 12)),
         ('00:00:12.5', datetime.time(0, 0, 12, 500000)),
         ('7:22:13.312', datetime.time(7, 22, 13, 312000)),
+        ('12:45:30.126631', datetime.time(12, 45, 30, 126631)),
+        ('12:45:30.126630', datetime.time(12, 45, 30, 126630)),
+        ('12:45:30.123456789', datetime.time(12, 45, 30, 123456)),
     ),
     'typecast_timestamp': (
         ('', None),
@@ -48,9 +49,14 @@ TEST_CASES = {
     ),
 }
 
+
 class DBTypeCasts(unittest.TestCase):
     def test_typeCasts(self):
-        for k, v in six.iteritems(TEST_CASES):
+        for k, v in TEST_CASES.items():
             for inpt, expected in v:
-                got = getattr(typecasts, k)(inpt)
-                self.assertEqual(got, expected, "In %s: %r doesn't match %r. Got %r instead." % (k, inpt, expected, got))
+                with self.subTest(k=k, inpt=inpt):
+                    got = getattr(typecasts, k)(inpt)
+                    self.assertEqual(
+                        got, expected,
+                        "In %s: %r doesn't match %r. Got %r instead." % (k, inpt, expected, got)
+                    )

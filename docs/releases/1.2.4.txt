@@ -19,9 +19,9 @@ Backwards incompatible changes
 ==============================
 
 Restricted filters in admin interface
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-------------------------------------
 
-The Django administrative interface, django.contrib.admin, supports
+The Django administrative interface, ``django.contrib.admin``, supports
 filtering of displayed lists of objects by fields on the corresponding
 models, including across database-level relationships. This is
 implemented by passing lookup arguments in the querystring portion of
@@ -42,7 +42,7 @@ with repeated use of regular-expression lookups supported by the
 Django database API -- expose sensitive information such as users'
 password hashes.
 
-To remedy this, django.contrib.admin will now validate that
+To remedy this, ``django.contrib.admin`` will now validate that
 querystring lookup arguments either specify only fields on the model
 being viewed, or cross relations which have been explicitly
 whitelisted by the application developer using the pre-existing
@@ -66,11 +66,9 @@ configuration.
 
 Most users -- even users with multiple-database configurations -- need
 not be concerned about the data loss bug, or the manual configuration of
-:setting:`TEST_DEPENDENCIES`. See the `original problem report`_
+:setting:`TEST_DEPENDENCIES`. See the :ticket:`original problem report <14415>`
 documentation on :ref:`controlling the creation order of test
 databases <topics-testing-creation-dependencies>` for details.
-
-.. _original problem report: https://code.djangoproject.com/ticket/14415
 
 GeoDjango
 =========
@@ -78,7 +76,7 @@ GeoDjango
 The function-based :setting:`TEST_RUNNER` previously used to execute
 the GeoDjango test suite, ``django.contrib.gis.tests.run_gis_tests``,
 was finally deprecated in favor of a class-based test runner,
-:class:`django.contrib.gis.tests.GeoDjangoTestSuiteRunner`, added in this
+``django.contrib.gis.tests.GeoDjangoTestSuiteRunner``, added in this
 release.
 
 In addition, the GeoDjango test suite is now included when

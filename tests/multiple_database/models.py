@@ -1,82 +1,83 @@
-from __future__ import absolute_import
-
 from django.contrib.auth.models import User
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation,
+)
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes import generic
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 
-@python_2_unicode_compatible
 class Review(models.Model):
     source = models.CharField(max_length=100)
-    content_type = models.ForeignKey(ContentType)
+    content_type = models.ForeignKey(ContentType, models.CASCADE)
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey()
+    content_object = GenericForeignKey()
+
+    class Meta:
+        ordering = ('source',)
 
     def __str__(self):
         return self.source
 
-    class Meta:
-        ordering = ('source',)
 
 class PersonManager(models.Manager):
     def get_by_natural_key(self, name):
         return self.get(name=name)
 
-@python_2_unicode_compatible
+
 class Person(models.Model):
-    objects = PersonManager()
     name = models.CharField(max_length=100)
+
+    objects = PersonManager()
+
+    class Meta:
+        ordering = ('name',)
 
     def __str__(self):
         return self.name
 
-    class Meta:
-        ordering = ('name',)
 
 # This book manager doesn't do anything interesting; it just
 # exists to strip out the 'extra_arg' argument to certain
 # calls. This argument is used to establish that the BookManager
 # is actually getting used when it should be.
 class BookManager(models.Manager):
-    def create(self, *args, **kwargs):
-        kwargs.pop('extra_arg', None)
-        return super(BookManager, self).create(*args, **kwargs)
+    def create(self, *args, extra_arg=None, **kwargs):
+        return super().create(*args, **kwargs)
 
-    def get_or_create(self, *args, **kwargs):
-        kwargs.pop('extra_arg', None)
-        return super(BookManager, self).get_or_create(*args, **kwargs)
+    def get_or_create(self, *args, extra_arg=None, **kwargs):
+        return super().get_or_create(*args, **kwargs)
 
-@python_2_unicode_compatible
+
 class Book(models.Model):
-    objects = BookManager()
     title = models.CharField(max_length=100)
     published = models.DateField()
     authors = models.ManyToManyField(Person)
-    editor = models.ForeignKey(Person, null=True, related_name='edited')
-    reviews = generic.GenericRelation(Review)
+    editor = models.ForeignKey(Person, models.SET_NULL, null=True, related_name='edited')
+    reviews = GenericRelation(Review)
     pages = models.IntegerField(default=100)
 
-    def __str__(self):
-        return self.title
+    objects = BookManager()
 
     class Meta:
         ordering = ('title',)
 
-@python_2_unicode_compatible
+    def __str__(self):
+        return self.title
+
+
 class Pet(models.Model):
     name = models.CharField(max_length=100)
-    owner = models.ForeignKey(Person)
-
-    def __str__(self):
-        return self.name
+    owner = models.ForeignKey(Person, models.CASCADE)
 
     class Meta:
         ordering = ('name',)
 
+    def __str__(self):
+        return self.name
+
+
 class UserProfile(models.Model):
-    user = models.OneToOneField(User, null=True)
+    user = models.OneToOneField(User, models.SET_NULL, null=True)
     flavor = models.CharField(max_length=100)
 
     class Meta:

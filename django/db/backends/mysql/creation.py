@@ -1,70 +1,66 @@
-from django.db.backends.creation import BaseDatabaseCreation
+import subprocess
+import sys
+
+from django.db.backends.base.creation import BaseDatabaseCreation
+
+from .client import DatabaseClient
+
 
 class DatabaseCreation(BaseDatabaseCreation):
-    # This dictionary maps Field objects to their associated MySQL column
-    # types, as strings. Column-type strings can contain format strings; they'll
-    # be interpolated against the values of Field.__dict__ before being output.
-    # If a column type is set to None, it won't be included in the output.
-    data_types = {
-        'AutoField':         'integer AUTO_INCREMENT',
-        'BinaryField':       'longblob',
-        'BooleanField':      'bool',
-        'CharField':         'varchar(%(max_length)s)',
-        'CommaSeparatedIntegerField': 'varchar(%(max_length)s)',
-        'DateField':         'date',
-        'DateTimeField':     'datetime',
-        'DecimalField':      'numeric(%(max_digits)s, %(decimal_places)s)',
-        'FileField':         'varchar(%(max_length)s)',
-        'FilePathField':     'varchar(%(max_length)s)',
-        'FloatField':        'double precision',
-        'IntegerField':      'integer',
-        'BigIntegerField':   'bigint',
-        'IPAddressField':    'char(15)',
-        'GenericIPAddressField': 'char(39)',
-        'NullBooleanField':  'bool',
-        'OneToOneField':     'integer',
-        'PositiveIntegerField': 'integer UNSIGNED',
-        'PositiveSmallIntegerField': 'smallint UNSIGNED',
-        'SlugField':         'varchar(%(max_length)s)',
-        'SmallIntegerField': 'smallint',
-        'TextField':         'longtext',
-        'TimeField':         'time',
-    }
 
     def sql_table_creation_suffix(self):
         suffix = []
-        if self.connection.settings_dict['TEST_CHARSET']:
-            suffix.append('CHARACTER SET %s' % self.connection.settings_dict['TEST_CHARSET'])
-        if self.connection.settings_dict['TEST_COLLATION']:
-            suffix.append('COLLATE %s' % self.connection.settings_dict['TEST_COLLATION'])
+        test_settings = self.connection.settings_dict['TEST']
+        if test_settings['CHARSET']:
+            suffix.append('CHARACTER SET %s' % test_settings['CHARSET'])
+        if test_settings['COLLATION']:
+            suffix.append('COLLATE %s' % test_settings['COLLATION'])
         return ' '.join(suffix)
 
-    def sql_for_inline_foreign_key_references(self, model, field, known_models, style):
-        "All inline references are pending under MySQL"
-        return [], True
+    def _execute_create_test_db(self, cursor, parameters, keepdb=False):
+        try:
+            super()._execute_create_test_db(cursor, parameters, keepdb)
+        except Exception as e:
+            if len(e.args) < 1 or e.args[0] != 1007:
+                # All errors except "database exists" (1007) cancel tests.
+                self.log('Got an error creating the test database: %s' % e)
+                sys.exit(2)
+            else:
+                raise
 
-    def sql_destroy_indexes_for_fields(self, model, fields, style):
-        if len(fields) == 1 and fields[0].db_tablespace:
-            tablespace_sql = self.connection.ops.tablespace_sql(fields[0].db_tablespace)
-        elif model._meta.db_tablespace:
-            tablespace_sql = self.connection.ops.tablespace_sql(model._meta.db_tablespace)
-        else:
-            tablespace_sql = ""
-        if tablespace_sql:
-            tablespace_sql = " " + tablespace_sql
+    def _clone_test_db(self, suffix, verbosity, keepdb=False):
+        source_database_name = self.connection.settings_dict['NAME']
+        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']
+        test_db_params = {
+            'dbname': self.connection.ops.quote_name(target_database_name),
+            'suffix': self.sql_table_creation_suffix(),
+        }
+        with self._nodb_cursor() as cursor:
+            try:
+                self._execute_create_test_db(cursor, test_db_params, keepdb)
+            except Exception:
+                if keepdb:
+                    # If the database should be kept, skip everything else.
+                    return
+                try:
+                    if verbosity >= 1:
+                        self.log('Destroying old test database for alias %s...' % (
+                            self._get_database_display_str(verbosity, target_database_name),
+                        ))
+                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)
+                    self._execute_create_test_db(cursor, test_db_params, keepdb)
+                except Exception as e:
+                    self.log('Got an error recreating the test database: %s' % e)
+                    sys.exit(2)
+        self._clone_db(source_database_name, target_database_name)
 
-        field_names = []
-        qn = self.connection.ops.quote_name
-        for f in fields:
-            field_names.append(style.SQL_FIELD(qn(f.column)))
+    def _clone_db(self, source_database_name, target_database_name):
+        dump_args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)[1:]
+        dump_cmd = ['mysqldump', *dump_args[:-1], '--routines', '--events', source_database_name]
+        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)
+        load_cmd[-1] = target_database_name
 
-        index_name = "%s_%s" % (model._meta.db_table, self._digest([f.name for f in fields]))
-
-        from ..util import truncate_name
-
-        return [
-            style.SQL_KEYWORD("DROP INDEX") + " " +
-            style.SQL_TABLE(qn(truncate_name(index_name, self.connection.ops.max_name_length()))) + " " +
-            style.SQL_KEYWORD("ON") + " " +
-            style.SQL_TABLE(qn(model._meta.db_table)) + ";",
-        ]
+        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:
+            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):
+                # Allow dump_proc to receive a SIGPIPE if the load process exits.
+                dump_proc.stdout.close()

@@ -1,36 +1,25 @@
 import cgi
-import errno
 import mimetypes
 import os
 import posixpath
-import re
 import shutil
 import stat
-import sys
 import tempfile
-try:
-    from urllib.request import urlretrieve
-except ImportError:     # Python 2
-    from urllib import urlretrieve
-
-from optparse import make_option
-from os import path
+from importlib import import_module
+from urllib.request import urlretrieve
 
 import django
-from django.template import Template, Context
-from django.utils import archive
-from django.utils._os import rmtree_errorhandler
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.core.management.utils import handle_extensions
-
-
-_drive_re = re.compile('^([a-z]):', re.I)
-_url_drive_re = re.compile('^([a-z])[:|]', re.I)
+from django.template import Context, Engine
+from django.utils import archive
+from django.utils.version import get_docs_version
 
 
 class TemplateCommand(BaseCommand):
     """
-    Copies either a Django application layout template or a Django project
+    Copy either a Django application layout template or a Django project
     layout template into the specified directory.
 
     :param style: A color style object (see django.core.management.color).
@@ -39,60 +28,61 @@ class TemplateCommand(BaseCommand):
     :param directory: The directory to which the template should be copied.
     :param options: The additional variables passed to project or app templates
     """
-    args = "[name] [optional destination directory]"
-    option_list = BaseCommand.option_list + (
-        make_option('--template',
-                    action='store', dest='template',
-                    help='The dotted import path to load the template from.'),
-        make_option('--extension', '-e', dest='extensions',
-                    action='append', default=['py'],
-                    help='The file extension(s) to render (default: "py"). '
-                         'Separate multiple extensions with commas, or use '
-                         '-e multiple times.'),
-        make_option('--name', '-n', dest='files',
-                    action='append', default=[],
-                    help='The file name(s) to render. '
-                         'Separate multiple extensions with commas, or use '
-                         '-n multiple times.')
-        )
-    requires_model_validation = False
-    # Can't import settings during this command, because they haven't
-    # necessarily been created.
-    can_import_settings = False
+    requires_system_checks = False
     # The supported URL schemes
     url_schemes = ['http', 'https', 'ftp']
-    # Can't perform any active locale changes during this command, because
-    # setting might not be available at all.
-    leave_locale_alone = True
+    # Rewrite the following suffixes when determining the target filename.
+    rewrite_template_suffixes = (
+        # Allow shipping invalid .py files without byte-compilation.
+        ('.py-tpl', '.py'),
+    )
+
+    def add_arguments(self, parser):
+        parser.add_argument('name', help='Name of the application or project.')
+        parser.add_argument('directory', nargs='?', help='Optional destination directory')
+        parser.add_argument('--template', help='The path or URL to load the template from.')
+        parser.add_argument(
+            '--extension', '-e', dest='extensions',
+            action='append', default=['py'],
+            help='The file extension(s) to render (default: "py"). '
+                 'Separate multiple extensions with commas, or use '
+                 '-e multiple times.'
+        )
+        parser.add_argument(
+            '--name', '-n', dest='files',
+            action='append', default=[],
+            help='The file name(s) to render. Separate multiple file names '
+                 'with commas, or use -n multiple times.'
+        )
 
     def handle(self, app_or_project, name, target=None, **options):
         self.app_or_project = app_or_project
+        self.a_or_an = 'an' if app_or_project == 'app' else 'a'
         self.paths_to_remove = []
-        self.verbosity = int(options.get('verbosity'))
+        self.verbosity = options['verbosity']
 
-        self.validate_name(name, app_or_project)
+        self.validate_name(name)
 
         # if some directory is given, make sure it's nicely expanded
         if target is None:
-            top_dir = path.join(os.getcwd(), name)
+            top_dir = os.path.join(os.getcwd(), name)
             try:
                 os.makedirs(top_dir)
+            except FileExistsError:
+                raise CommandError("'%s' already exists" % top_dir)
             except OSError as e:
-                if e.errno == errno.EEXIST:
-                    message = "'%s' already exists" % top_dir
-                else:
-                    message = e
-                raise CommandError(message)
+                raise CommandError(e)
         else:
-            top_dir = os.path.abspath(path.expanduser(target))
+            if app_or_project == 'app':
+                self.validate_name(os.path.basename(target), 'directory')
+            top_dir = os.path.abspath(os.path.expanduser(target))
             if not os.path.exists(top_dir):
                 raise CommandError("Destination directory '%s' does not "
                                    "exist, please create it first." % top_dir)
 
-        extensions = tuple(
-            handle_extensions(options.get('extensions'), ignored=()))
+        extensions = tuple(handle_extensions(options['extensions']))
         extra_files = []
-        for file in options.get('files'):
+        for file in options['files']:
             extra_files.extend(map(lambda x: x.strip(), file.split(',')))
         if self.verbosity >= 2:
             self.stdout.write("Rendering %s template files with "
@@ -105,23 +95,24 @@ class TemplateCommand(BaseCommand):
         base_name = '%s_name' % app_or_project
         base_subdir = '%s_template' % app_or_project
         base_directory = '%s_directory' % app_or_project
-        if django.VERSION[-1] == 0:
-            docs_version = 'dev'
-        else:
-            docs_version = '%d.%d' % django.VERSION[:2]
+        camel_case_name = 'camel_case_%s_name' % app_or_project
+        camel_case_value = ''.join(x for x in name.title() if x != '_')
 
-        context = Context(dict(options, **{
+        context = Context({
+            **options,
             base_name: name,
             base_directory: top_dir,
-            'docs_version': docs_version,
-        }), autoescape=False)
+            camel_case_name: camel_case_value,
+            'docs_version': get_docs_version(),
+            'django_version': django.__version__,
+        }, autoescape=False)
 
         # Setup a stub settings environment for template rendering
-        from django.conf import settings
         if not settings.configured:
             settings.configure()
+            django.setup()
 
-        template_dir = self.handle_template(options.get('template'),
+        template_dir = self.handle_template(options['template'],
                                             base_subdir)
         prefix_length = len(template_dir) + 1
 
@@ -130,9 +121,8 @@ class TemplateCommand(BaseCommand):
             path_rest = root[prefix_length:]
             relative_dir = path_rest.replace(base_name, name)
             if relative_dir:
-                target_dir = path.join(top_dir, relative_dir)
-                if not path.exists(target_dir):
-                    os.mkdir(target_dir)
+                target_dir = os.path.join(top_dir, relative_dir)
+                os.makedirs(target_dir, exist_ok=True)
 
             for dirname in dirs[:]:
                 if dirname.startswith('.') or dirname == '__pycache__':
@@ -142,26 +132,34 @@ class TemplateCommand(BaseCommand):
                 if filename.endswith(('.pyo', '.pyc', '.py.class')):
                     # Ignore some files as they cause various breakages.
                     continue
-                old_path = path.join(root, filename)
-                new_path = path.join(top_dir, relative_dir,
-                                     filename.replace(base_name, name))
-                if path.exists(new_path):
-                    raise CommandError("%s already exists, overlaying a "
-                                       "project or app into an existing "
-                                       "directory won't replace conflicting "
-                                       "files" % new_path)
+                old_path = os.path.join(root, filename)
+                new_path = os.path.join(
+                    top_dir, relative_dir, filename.replace(base_name, name)
+                )
+                for old_suffix, new_suffix in self.rewrite_template_suffixes:
+                    if new_path.endswith(old_suffix):
+                        new_path = new_path[:-len(old_suffix)] + new_suffix
+                        break  # Only rewrite once
+
+                if os.path.exists(new_path):
+                    raise CommandError(
+                        "%s already exists. Overlaying %s %s into an existing "
+                        "directory won't replace conflicting files." % (
+                            new_path, self.a_or_an, app_or_project,
+                        )
+                    )
 
                 # Only render the Python files, as we don't want to
                 # accidentally render Django templates files
-                with open(old_path, 'rb') as template_file:
-                    content = template_file.read()
-                if filename.endswith(extensions) or filename in extra_files:
-                    content = content.decode('utf-8')
-                    template = Template(content)
+                if new_path.endswith(extensions) or filename in extra_files:
+                    with open(old_path, encoding='utf-8') as template_file:
+                        content = template_file.read()
+                    template = Engine().from_string(content)
                     content = template.render(context)
-                    content = content.encode('utf-8')
-                with open(new_path, 'wb') as new_file:
-                    new_file.write(content)
+                    with open(new_path, 'w', encoding='utf-8') as new_file:
+                        new_file.write(content)
+                else:
+                    shutil.copyfile(old_path, new_path)
 
                 if self.verbosity >= 2:
                     self.stdout.write("Creating %s\n" % new_path)
@@ -178,61 +176,79 @@ class TemplateCommand(BaseCommand):
             if self.verbosity >= 2:
                 self.stdout.write("Cleaning up temporary files.\n")
             for path_to_remove in self.paths_to_remove:
-                if path.isfile(path_to_remove):
+                if os.path.isfile(path_to_remove):
                     os.remove(path_to_remove)
                 else:
-                    shutil.rmtree(path_to_remove,
-                                  onerror=rmtree_errorhandler)
+                    shutil.rmtree(path_to_remove)
 
     def handle_template(self, template, subdir):
         """
-        Determines where the app or project templates are.
-        Use django.__path__[0] as the default because we don't
-        know into which directory Django has been installed.
+        Determine where the app or project templates are.
+        Use django.__path__[0] as the default because the Django install
+        directory isn't known.
         """
         if template is None:
-            return path.join(django.__path__[0], 'conf', subdir)
+            return os.path.join(django.__path__[0], 'conf', subdir)
         else:
             if template.startswith('file://'):
                 template = template[7:]
-            expanded_template = path.expanduser(template)
-            expanded_template = path.normpath(expanded_template)
-            if path.isdir(expanded_template):
+            expanded_template = os.path.expanduser(template)
+            expanded_template = os.path.normpath(expanded_template)
+            if os.path.isdir(expanded_template):
                 return expanded_template
             if self.is_url(template):
                 # downloads the file and returns the path
                 absolute_path = self.download(template)
             else:
-                absolute_path = path.abspath(expanded_template)
-            if path.exists(absolute_path):
+                absolute_path = os.path.abspath(expanded_template)
+            if os.path.exists(absolute_path):
                 return self.extract(absolute_path)
 
         raise CommandError("couldn't handle %s template %s." %
                            (self.app_or_project, template))
 
-    def validate_name(self, name, app_or_project):
+    def validate_name(self, name, name_or_dir='name'):
         if name is None:
-            raise CommandError("you must provide %s %s name" % (
-                "an" if app_or_project == "app" else "a", app_or_project))
-        # If it's not a valid directory name.
-        if not re.search(r'^[_a-zA-Z]\w*$', name):
-            # Provide a smart error message, depending on the error.
-            if not re.search(r'^[_a-zA-Z]', name):
-                message = 'make sure the name begins with a letter or underscore'
-            else:
-                message = 'use only numbers, letters and underscores'
-            raise CommandError("%r is not a valid %s name. Please %s." %
-                               (name, app_or_project, message))
+            raise CommandError('you must provide {an} {app} name'.format(
+                an=self.a_or_an,
+                app=self.app_or_project,
+            ))
+        # Check it's a valid directory name.
+        if not name.isidentifier():
+            raise CommandError(
+                "'{name}' is not a valid {app} {type}. Please make sure the "
+                "{type} is a valid identifier.".format(
+                    name=name,
+                    app=self.app_or_project,
+                    type=name_or_dir,
+                )
+            )
+        # Check it cannot be imported.
+        try:
+            import_module(name)
+        except ImportError:
+            pass
+        else:
+            raise CommandError(
+                "'{name}' conflicts with the name of an existing Python "
+                "module and cannot be used as {an} {app} {type}. Please try "
+                "another {type}.".format(
+                    name=name,
+                    an=self.a_or_an,
+                    app=self.app_or_project,
+                    type=name_or_dir,
+                )
+            )
 
     def download(self, url):
         """
-        Downloads the given URL and returns the file name.
+        Download the given URL and return the file name.
         """
         def cleanup_url(url):
             tmp = url.rstrip('/')
             filename = tmp.split('/')[-1]
             if url.endswith('/'):
-                display_url  = tmp + '/'
+                display_url = tmp + '/'
             else:
                 display_url = url
             return filename, display_url
@@ -245,8 +261,8 @@ class TemplateCommand(BaseCommand):
         if self.verbosity >= 2:
             self.stdout.write("Downloading %s\n" % display_url)
         try:
-            the_path, info = urlretrieve(url, path.join(tempdir, filename))
-        except IOError as e:
+            the_path, info = urlretrieve(url, os.path.join(tempdir, filename))
+        except OSError as e:
             raise CommandError("couldn't download URL %s to %s: %s" %
                                (url, filename, e))
 
@@ -269,9 +285,9 @@ class TemplateCommand(BaseCommand):
                 guessed_filename += ext
 
         # Move the temporary file to a filename that has better
-        # chances of being recognnized by the archive utils
+        # chances of being recognized by the archive utils
         if used_name != guessed_filename:
-            guessed_path = path.join(tempdir, guessed_filename)
+            guessed_path = os.path.join(tempdir, guessed_filename)
             shutil.move(the_path, guessed_path)
             return guessed_path
 
@@ -290,7 +306,7 @@ class TemplateCommand(BaseCommand):
 
     def extract(self, filename):
         """
-        Extracts the given file to a temporarily and returns
+        Extract the given file to a temporarily and return
         the path of the directory with the extracted content.
         """
         prefix = 'django_%s_template_' % self.app_or_project
@@ -301,14 +317,12 @@ class TemplateCommand(BaseCommand):
         try:
             archive.extract(filename, tempdir)
             return tempdir
-        except (archive.ArchiveException, IOError) as e:
+        except (archive.ArchiveException, OSError) as e:
             raise CommandError("couldn't extract file %s to %s: %s" %
                                (filename, tempdir, e))
 
     def is_url(self, template):
-        """
-        Returns True if the name looks like a URL
-        """
+        """Return True if the name looks like a URL."""
         if ':' not in template:
             return False
         scheme = template.split(':', 1)[0].lower()
@@ -319,9 +333,6 @@ class TemplateCommand(BaseCommand):
         Make sure that the file is writeable.
         Useful if our source is read-only.
         """
-        if sys.platform.startswith('java'):
-            # On Jython there is no os.access()
-            return
         if not os.access(filename, os.W_OK):
             st = os.stat(filename)
             new_permissions = stat.S_IMODE(st.st_mode) | stat.S_IWUSR

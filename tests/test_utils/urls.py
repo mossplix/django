@@ -1,10 +1,8 @@
-from __future__ import absolute_import
-
-from django.conf.urls import patterns
+from django.urls import path
 
 from . import views
 
-
-urlpatterns = patterns('',
-    (r'^test_utils/get_person/(\d+)/$', views.get_person),
-)
+urlpatterns = [
+    path('test_utils/get_person/<int:pk>/', views.get_person),
+    path('test_utils/no_template_used/', views.no_template_used, name='no_template_used'),
+]

@@ -1,14 +1,13 @@
-from __future__ import absolute_import
-
 from django.core.exceptions import FieldError
 from django.test import TestCase
 
-from .models import User, Poll, Choice
+from .models import Choice, Poll, User
 
 
 class ReverseLookupTests(TestCase):
 
-    def setUp(self):
+    @classmethod
+    def setUpTestData(cls):
         john = User.objects.create(name="John Doe")
         jim = User.objects.create(name="Jim Bo")
         first_poll = Poll.objects.create(
@@ -19,7 +18,7 @@ class ReverseLookupTests(TestCase):
             question="What's the second question?",
             creator=jim
         )
-        new_choice = Choice.objects.create(
+        Choice.objects.create(
             poll=first_poll,
             related_poll=second_poll,
             name="This is the answer."
@@ -40,13 +39,16 @@ class ReverseLookupTests(TestCase):
         p1 = Poll.objects.get(poll_choice__name__exact="This is the answer.")
         self.assertEqual(p1.question, "What's the first question?")
 
-        p2 = Poll.objects.get(
-            related_choice__name__exact="This is the answer.")
+        p2 = Poll.objects.get(related_choice__name__exact='This is the answer.')
         self.assertEqual(p2.question, "What's the second question?")
 
     def test_reverse_field_name_disallowed(self):
         """
         If a related_name is given you can't use the field name instead
         """
-        self.assertRaises(FieldError, Poll.objects.get,
-            choice__name__exact="This is the answer")
+        msg = (
+            "Cannot resolve keyword 'choice' into field. Choices are: "
+            "creator, creator_id, id, poll_choice, question, related_choice"
+        )
+        with self.assertRaisesMessage(FieldError, msg):
+            Poll.objects.get(choice__name__exact="This is the answer")

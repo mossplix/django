@@ -4,47 +4,56 @@
 {% block coltype %}colSM{% endblock %}
 {% block breadcrumbs %}
 <div class="breadcrumbs">
-<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
-&rsaquo; <a href="{% url 'django-admindocs-docroot' %}">{% trans 'Documentation' %}</a>
-&rsaquo; {% trans 'Views' %}
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'django-admindocs-docroot' %}">{% translate 'Documentation' %}</a>
+&rsaquo; {% translate 'Views' %}
 </div>
 {% endblock %}
-{% block title %}Views{% endblock %}
+{% block title %}{% translate 'Views' %}{% endblock %}
 
 {% block content %}
 
-<h1>View documentation</h1>
+<h1>{% translate 'View documentation' %}</h1>
 
-{% regroup views|dictsort:"site_id" by site as views_by_site %}
+{% regroup views|dictsort:'namespace' by namespace as views_by_ns %}
 
 <div id="content-related" class="sidebar">
 <div class="module">
-<h2>Jump to site</h2>
+<h2>{% translate 'Jump to namespace' %}</h2>
 <ul>
-    {% for site_views in views_by_site %}
-    <li><a href="#site{{ site_views.grouper.id }}">{{ site_views.grouper.name }}</a></li>
-    {% endfor %}
+{% for ns_views in views_by_ns %}
+    <li><a href="#ns|{{ ns_views.grouper }}">
+    {% if ns_views.grouper %}{{ ns_views.grouper }}
+    {% else %}{% translate "Empty namespace" %}{% endif %}
+    </a></li>
+{% endfor %}
 </ul>
 </div>
 </div>
 
 <div id="content-main">
 
-{% for site_views in views_by_site %}
+{% for ns_views in views_by_ns %}
 <div class="module">
-<h2 id="site{{ site_views.grouper.id }}">Views by URL on {{ site_views.grouper.name }}</h2>
+<h2 id="ns|{{ ns_views.grouper }}">
+{% if ns_views.grouper %}
+    {% blocktranslate with ns_views.grouper as name %}Views by namespace {{ name }}{% endblocktranslate %}
+{% else %}
+    {% blocktranslate %}Views by empty namespace{% endblocktranslate %}
+{% endif %}
+</h2>
 
-{% for view in site_views.list|dictsort:"url" %}
+{% for view in ns_views.list|dictsort:"url" %}
 {% ifchanged %}
 <h3><a href="{% url 'django-admindocs-views-detail' view=view.full_name %}">{{ view.url }}</a></h3>
-<p class="small quiet">View function: {{ view.full_name }}</p>
+<p class="small quiet">{% blocktranslate with view.full_name as full_name and view.url_name as url_name %}
+    View function: <code>{{ full_name }}</code>. Name: <code>{{ url_name }}</code>.
+{% endblocktranslate %}</p>
 <p>{{ view.title }}</p>
-<hr />
+<hr>
 {% endifchanged %}
 {% endfor %}
 </div>
 {% endfor %}
 </div>
 {% endblock %}
-
-

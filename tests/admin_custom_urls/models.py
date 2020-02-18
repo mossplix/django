@@ -1,13 +1,11 @@
 from functools import update_wrapper
 
 from django.contrib import admin
-from django.core.urlresolvers import reverse
 from django.db import models
 from django.http import HttpResponseRedirect
-from django.utils.encoding import python_2_unicode_compatible
+from django.urls import reverse
 
 
-@python_2_unicode_compatible
 class Action(models.Model):
     name = models.CharField(max_length=50, primary_key=True)
     description = models.CharField(max_length=70)
@@ -30,12 +28,12 @@ class ActionAdmin(admin.ModelAdmin):
         Remove all entries named 'name' from the ModelAdmin instance URL
         patterns list
         """
-        return [url for url in super(ActionAdmin, self).get_urls() if url.name != name]
+        return [url for url in super().get_urls() if url.name != name]
 
     def get_urls(self):
         # Add the URL of our custom 'add_view' view to the front of the URLs
         # list.  Remove the existing one(s) first
-        from django.conf.urls import patterns, url
+        from django.urls import re_path
 
         def wrap(view):
             def wrapper(*args, **kwargs):
@@ -46,13 +44,14 @@ class ActionAdmin(admin.ModelAdmin):
 
         view_name = '%s_%s_add' % info
 
-        return patterns('',
-            url(r'^!add/$', wrap(self.add_view), name=view_name),
-        ) + self.remove_url(view_name)
+        return [
+            re_path('^!add/$', wrap(self.add_view), name=view_name),
+        ] + self.remove_url(view_name)
 
 
 class Person(models.Model):
     name = models.CharField(max_length=20)
+
 
 class PersonAdmin(admin.ModelAdmin):
 
@@ -68,13 +67,17 @@ class PersonAdmin(admin.ModelAdmin):
 class Car(models.Model):
     name = models.CharField(max_length=20)
 
+
 class CarAdmin(admin.ModelAdmin):
 
     def response_add(self, request, obj, post_url_continue=None):
-        return super(CarAdmin, self).response_add(
-            request, obj, post_url_continue=reverse('admin:admin_custom_urls_car_history', args=[obj.pk]))
+        return super().response_add(
+            request, obj,
+            post_url_continue=reverse('admin:admin_custom_urls_car_history', args=[obj.pk]),
+        )
 
 
-admin.site.register(Action, ActionAdmin)
-admin.site.register(Person, PersonAdmin)
-admin.site.register(Car, CarAdmin)
+site = admin.AdminSite(name='admin_custom_urls')
+site.register(Action, ActionAdmin)
+site.register(Person, PersonAdmin)
+site.register(Car, CarAdmin)

@@ -1,83 +1,19 @@
-from __future__ import unicode_literals
-
-import codecs
-import logging
-import sys
 from io import BytesIO
-from threading import Lock
 
-from django import http
+from django.conf import settings
 from django.core import signals
 from django.core.handlers import base
-from django.core.urlresolvers import set_script_prefix
-from django.utils import datastructures
-from django.utils.encoding import force_str, force_text, iri_to_uri
+from django.http import HttpRequest, QueryDict, parse_cookie
+from django.urls import set_script_prefix
+from django.utils.encoding import repercent_broken_unicode
+from django.utils.functional import cached_property
+from django.utils.regex_helper import _lazy_re_compile
 
-logger = logging.getLogger('django.request')
+_slashes_re = _lazy_re_compile(br'/+')
 
 
-# See http://www.iana.org/assignments/http-status-codes
-STATUS_CODE_TEXT = {
-    100: 'CONTINUE',
-    101: 'SWITCHING PROTOCOLS',
-    102: 'PROCESSING',
-    200: 'OK',
-    201: 'CREATED',
-    202: 'ACCEPTED',
-    203: 'NON-AUTHORITATIVE INFORMATION',
-    204: 'NO CONTENT',
-    205: 'RESET CONTENT',
-    206: 'PARTIAL CONTENT',
-    207: 'MULTI-STATUS',
-    208: 'ALREADY REPORTED',
-    226: 'IM USED',
-    300: 'MULTIPLE CHOICES',
-    301: 'MOVED PERMANENTLY',
-    302: 'FOUND',
-    303: 'SEE OTHER',
-    304: 'NOT MODIFIED',
-    305: 'USE PROXY',
-    306: 'RESERVED',
-    307: 'TEMPORARY REDIRECT',
-    400: 'BAD REQUEST',
-    401: 'UNAUTHORIZED',
-    402: 'PAYMENT REQUIRED',
-    403: 'FORBIDDEN',
-    404: 'NOT FOUND',
-    405: 'METHOD NOT ALLOWED',
-    406: 'NOT ACCEPTABLE',
-    407: 'PROXY AUTHENTICATION REQUIRED',
-    408: 'REQUEST TIMEOUT',
-    409: 'CONFLICT',
-    410: 'GONE',
-    411: 'LENGTH REQUIRED',
-    412: 'PRECONDITION FAILED',
-    413: 'REQUEST ENTITY TOO LARGE',
-    414: 'REQUEST-URI TOO LONG',
-    415: 'UNSUPPORTED MEDIA TYPE',
-    416: 'REQUESTED RANGE NOT SATISFIABLE',
-    417: 'EXPECTATION FAILED',
-    422: 'UNPROCESSABLE ENTITY',
-    423: 'LOCKED',
-    424: 'FAILED DEPENDENCY',
-    426: 'UPGRADE REQUIRED',
-    500: 'INTERNAL SERVER ERROR',
-    501: 'NOT IMPLEMENTED',
-    502: 'BAD GATEWAY',
-    503: 'SERVICE UNAVAILABLE',
-    504: 'GATEWAY TIMEOUT',
-    505: 'HTTP VERSION NOT SUPPORTED',
-    506: 'VARIANT ALSO NEGOTIATES',
-    507: 'INSUFFICIENT STORAGE',
-    508: 'LOOP DETECTED',
-    510: 'NOT EXTENDED',
-}
-
-class LimitedStream(object):
-    '''
-    LimitedStream wraps another stream in order to not allow reading from it
-    past specified amount of bytes.
-    '''
+class LimitedStream:
+    """Wrap another stream to disallow reading it past a number of bytes."""
     def __init__(self, stream, limit, buf_size=64 * 1024 * 1024):
         self.stream = stream
         self.remaining = limit
@@ -100,7 +36,7 @@ class LimitedStream(object):
         elif size < len(self.buffer):
             result = self.buffer[:size]
             self.buffer = self.buffer[size:]
-        else: # size >= len(self.buffer)
+        else:  # size >= len(self.buffer)
             result = self.buffer + self._read_limited(size - len(self.buffer))
             self.buffer = b''
         return result
@@ -125,70 +61,41 @@ class LimitedStream(object):
         return line
 
 
-class WSGIRequest(http.HttpRequest):
+class WSGIRequest(HttpRequest):
     def __init__(self, environ):
-        script_name = base.get_script_name(environ)
-        path_info = base.get_path_info(environ)
-        if not path_info:
-            # Sometimes PATH_INFO exists, but is empty (e.g. accessing
-            # the SCRIPT_NAME URL without a trailing slash). We really need to
-            # operate as if they'd requested '/'. Not amazingly nice to force
-            # the path like this, but should be harmless.
-            path_info = '/'
+        script_name = get_script_name(environ)
+        # If PATH_INFO is empty (e.g. accessing the SCRIPT_NAME URL without a
+        # trailing slash), operate as if '/' was requested.
+        path_info = get_path_info(environ) or '/'
         self.environ = environ
         self.path_info = path_info
-        self.path = '%s/%s' % (script_name.rstrip('/'), path_info.lstrip('/'))
+        # be careful to only replace the first slash in the path because of
+        # http://test/something and http://test//something being different as
+        # stated in https://www.ietf.org/rfc/rfc2396.txt
+        self.path = '%s/%s' % (script_name.rstrip('/'),
+                               path_info.replace('/', '', 1))
         self.META = environ
         self.META['PATH_INFO'] = path_info
         self.META['SCRIPT_NAME'] = script_name
         self.method = environ['REQUEST_METHOD'].upper()
-        _, content_params = self._parse_content_type(self.META.get('CONTENT_TYPE', ''))
-        if 'charset' in content_params:
-            try:
-                codecs.lookup(content_params['charset'])
-            except LookupError:
-                pass
-            else:
-                self.encoding = content_params['charset']
-        self._post_parse_error = False
+        # Set content_type, content_params, and encoding.
+        self._set_content_type_params(environ)
         try:
-            content_length = int(self.environ.get('CONTENT_LENGTH'))
+            content_length = int(environ.get('CONTENT_LENGTH'))
         except (ValueError, TypeError):
             content_length = 0
         self._stream = LimitedStream(self.environ['wsgi.input'], content_length)
         self._read_started = False
+        self.resolver_match = None
 
-    def _is_secure(self):
-        return 'wsgi.url_scheme' in self.environ and self.environ['wsgi.url_scheme'] == 'https'
+    def _get_scheme(self):
+        return self.environ.get('wsgi.url_scheme')
 
-    def _parse_content_type(self, ctype):
-        """
-        Media Types parsing according to RFC 2616, section 3.7.
-
-        Returns the data type and parameters. For example:
-        Input: "text/plain; charset=iso-8859-1"
-        Output: ('text/plain', {'charset': 'iso-8859-1'})
-        """
-        content_type, _, params = ctype.partition(';')
-        content_params = {}
-        for parameter in params.split(';'):
-            k, _, v = parameter.strip().partition('=')
-            content_params[k] = v
-        return content_type, content_params
-
-    def _get_request(self):
-        if not hasattr(self, '_request'):
-            self._request = datastructures.MergeDict(self.POST, self.GET)
-        return self._request
-
-    def _get_get(self):
-        if not hasattr(self, '_get'):
-            # The WSGI spec says 'QUERY_STRING' may be absent.
-            self._get = http.QueryDict(self.environ.get('QUERY_STRING', ''), encoding=self._encoding)
-        return self._get
-
-    def _set_get(self, get):
-        self._get = get
+    @cached_property
+    def GET(self):
+        # The WSGI spec says 'QUERY_STRING' may be absent.
+        raw_query_string = get_bytes_from_wsgi(self.environ, 'QUERY_STRING', '')
+        return QueryDict(raw_query_string, encoding=self._encoding)
 
     def _get_post(self):
         if not hasattr(self, '_post'):
@@ -198,68 +105,106 @@ class WSGIRequest(http.HttpRequest):
     def _set_post(self, post):
         self._post = post
 
-    def _get_cookies(self):
-        if not hasattr(self, '_cookies'):
-            self._cookies = http.parse_cookie(self.environ.get('HTTP_COOKIE', ''))
-        return self._cookies
+    @cached_property
+    def COOKIES(self):
+        raw_cookie = get_str_from_wsgi(self.environ, 'HTTP_COOKIE', '')
+        return parse_cookie(raw_cookie)
 
-    def _set_cookies(self, cookies):
-        self._cookies = cookies
-
-    def _get_files(self):
+    @property
+    def FILES(self):
         if not hasattr(self, '_files'):
             self._load_post_and_files()
         return self._files
 
-    GET = property(_get_get, _set_get)
     POST = property(_get_post, _set_post)
-    COOKIES = property(_get_cookies, _set_cookies)
-    FILES = property(_get_files)
-    REQUEST = property(_get_request)
 
 
 class WSGIHandler(base.BaseHandler):
-    initLock = Lock()
     request_class = WSGIRequest
 
-    def __call__(self, environ, start_response):
-        # Set up middleware if needed. We couldn't do this earlier, because
-        # settings weren't available.
-        if self._request_middleware is None:
-            with self.initLock:
-                try:
-                    # Check that middleware is still uninitialised.
-                    if self._request_middleware is None:
-                        self.load_middleware()
-                except:
-                    # Unload whatever middleware we got
-                    self._request_middleware = None
-                    raise
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.load_middleware()
 
-        set_script_prefix(base.get_script_name(environ))
-        signals.request_started.send(sender=self.__class__)
-        try:
-            request = self.request_class(environ)
-        except UnicodeDecodeError:
-            logger.warning('Bad Request (UnicodeDecodeError)',
-                exc_info=sys.exc_info(),
-                extra={
-                    'status_code': 400,
-                }
-            )
-            response = http.HttpResponseBadRequest()
-        else:
-            response = self.get_response(request)
+    def __call__(self, environ, start_response):
+        set_script_prefix(get_script_name(environ))
+        signals.request_started.send(sender=self.__class__, environ=environ)
+        request = self.request_class(environ)
+        response = self.get_response(request)
 
         response._handler_class = self.__class__
 
-        try:
-            status_text = STATUS_CODE_TEXT[response.status_code]
-        except KeyError:
-            status_text = 'UNKNOWN STATUS CODE'
-        status = '%s %s' % (response.status_code, status_text)
-        response_headers = [(str(k), str(v)) for k, v in response.items()]
-        for c in response.cookies.values():
-            response_headers.append((str('Set-Cookie'), str(c.output(header=''))))
-        start_response(force_str(status), response_headers)
+        status = '%d %s' % (response.status_code, response.reason_phrase)
+        response_headers = [
+            *response.items(),
+            *(('Set-Cookie', c.output(header='')) for c in response.cookies.values()),
+        ]
+        start_response(status, response_headers)
+        if getattr(response, 'file_to_stream', None) is not None and environ.get('wsgi.file_wrapper'):
+            # If `wsgi.file_wrapper` is used the WSGI server does not call
+            # .close on the response, but on the file wrapper. Patch it to use
+            # response.close instead which takes care of closing all files.
+            response.file_to_stream.close = response.close
+            response = environ['wsgi.file_wrapper'](response.file_to_stream, response.block_size)
         return response
+
+
+def get_path_info(environ):
+    """Return the HTTP request's PATH_INFO as a string."""
+    path_info = get_bytes_from_wsgi(environ, 'PATH_INFO', '/')
+
+    return repercent_broken_unicode(path_info).decode()
+
+
+def get_script_name(environ):
+    """
+    Return the equivalent of the HTTP request's SCRIPT_NAME environment
+    variable. If Apache mod_rewrite is used, return what would have been
+    the script name prior to any rewriting (so it's the script name as seen
+    from the client's perspective), unless the FORCE_SCRIPT_NAME setting is
+    set (to anything).
+    """
+    if settings.FORCE_SCRIPT_NAME is not None:
+        return settings.FORCE_SCRIPT_NAME
+
+    # If Apache's mod_rewrite had a whack at the URL, Apache set either
+    # SCRIPT_URL or REDIRECT_URL to the full resource URL before applying any
+    # rewrites. Unfortunately not every Web server (lighttpd!) passes this
+    # information through all the time, so FORCE_SCRIPT_NAME, above, is still
+    # needed.
+    script_url = get_bytes_from_wsgi(environ, 'SCRIPT_URL', '') or get_bytes_from_wsgi(environ, 'REDIRECT_URL', '')
+
+    if script_url:
+        if b'//' in script_url:
+            # mod_wsgi squashes multiple successive slashes in PATH_INFO,
+            # do the same with script_url before manipulating paths (#17133).
+            script_url = _slashes_re.sub(b'/', script_url)
+        path_info = get_bytes_from_wsgi(environ, 'PATH_INFO', '')
+        script_name = script_url[:-len(path_info)] if path_info else script_url
+    else:
+        script_name = get_bytes_from_wsgi(environ, 'SCRIPT_NAME', '')
+
+    return script_name.decode()
+
+
+def get_bytes_from_wsgi(environ, key, default):
+    """
+    Get a value from the WSGI environ dictionary as bytes.
+
+    key and default should be strings.
+    """
+    value = environ.get(key, default)
+    # Non-ASCII values in the WSGI environ are arbitrarily decoded with
+    # ISO-8859-1. This is wrong for Django websites where UTF-8 is the default.
+    # Re-encode to recover the original bytestring.
+    return value.encode('iso-8859-1')
+
+
+def get_str_from_wsgi(environ, key, default):
+    """
+    Get a value from the WSGI environ dictionary as str.
+
+    key and default should be str objects.
+    """
+    value = get_bytes_from_wsgi(environ, key, default)
+    return value.decode(errors='replace')

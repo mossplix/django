@@ -2,12 +2,21 @@
 Simple mixins
 =============
 
-ContextMixin
-------------
+``ContextMixin``
+================
 
 .. class:: django.views.generic.base.ContextMixin
 
-    .. versionadded:: 1.5
+    **Attributes**
+
+    .. attribute:: extra_context
+
+        A dictionary to include in the context. This is a convenient way of
+        specifying some context in
+        :meth:`~django.views.generic.base.View.as_view`. Example usage::
+
+            from django.views.generic import TemplateView
+            TemplateView.as_view(extra_context={'title': 'Custom Title'})
 
     **Methods**
 
@@ -17,7 +26,7 @@ ContextMixin
         arguments provided will make up the returned context. Example usage::
 
             def get_context_data(self, **kwargs):
-                context = super(RandomNumberView, self).get_context_data(**kwargs)
+                context = super().get_context_data(**kwargs)
                 context['number'] = random.randrange(1, 100)
                 return context
 
@@ -33,8 +42,8 @@ ContextMixin
             the documentation on :ref:`rendering a template context
             <alters-data-description>`.
 
-TemplateResponseMixin
----------------------
+``TemplateResponseMixin``
+=========================
 
 .. class:: django.views.generic.base.TemplateResponseMixin
 
@@ -51,13 +60,19 @@ TemplateResponseMixin
         a ``template_name`` will raise a
         :class:`django.core.exceptions.ImproperlyConfigured` exception.
 
+    .. attribute:: template_engine
+
+        The :setting:`NAME <TEMPLATES-NAME>` of a template engine to use for
+        loading the template. ``template_engine`` is passed as the ``using``
+        keyword argument to ``response_class``. Default is ``None``, which
+        tells Django to search for the template in all configured engines.
+
     .. attribute:: response_class
 
         The response class to be returned by ``render_to_response`` method.
-        Default is
-        :class:`TemplateResponse <django.template.response.TemplateResponse>`.
-        The template and context of ``TemplateResponse`` instances can be
-        altered later (e.g. in
+        Default is :class:`TemplateResponse
+        <django.template.response.TemplateResponse>`. The template and context
+        of ``TemplateResponse`` instances can be altered later (e.g. in
         :ref:`template response middleware <template-response-middleware>`).
 
         If you need custom template loading or custom context object
@@ -66,12 +81,9 @@ TemplateResponseMixin
 
     .. attribute:: content_type
 
-        .. versionadded:: 1.5
-            The ``content_type`` attribute was added.
-
         The content type to use for the response. ``content_type`` is passed
         as a keyword argument to ``response_class``. Default is ``None`` --
-        meaning that Django uses :setting:`DEFAULT_CONTENT_TYPE`.
+        meaning that Django uses ``'text/html'``.
 
     **Methods**
 
@@ -88,7 +100,7 @@ TemplateResponseMixin
     .. method:: get_template_names()
 
         Returns a list of template names to search for when rendering the
-        template.
+        template. The first template that is found will be used.
 
         If :attr:`template_name` is specified, the default implementation will
         return a list containing :attr:`template_name` (if it is specified).

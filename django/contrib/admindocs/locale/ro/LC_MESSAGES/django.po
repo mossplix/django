@@ -1,16 +1,19 @@
 # This file is distributed under the same license as the Django package.
 #
 # Translators:
-# Daniel Ursache-Dogariu <contact@danniel.net>, 2011.
-# Jannis Leidel <jannis@leidel.info>, 2011.
+# Bogdan Mateescu, 2018-2019
+# Daniel Ursache-Dogariu, 2011
+# Denis Darii <denis.darii@gmail.com>, 2014
+# Jannis Leidel <jannis@leidel.info>, 2011
+# Razvan Stefanescu <razvan.stefanescu@gmail.com>, 2015-2017
 msgid ""
 msgstr ""
-"Project-Id-Version: Django\n"
+"Project-Id-Version: django\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2012-10-22 09:28+0200\n"
-"PO-Revision-Date: 2012-10-22 08:46+0000\n"
-"Last-Translator: Daniel Ursache-Dogariu <contact@danniel.net>\n"
-"Language-Team: Romanian (http://www.transifex.com/projects/p/django/language/"
+"POT-Creation-Date: 2019-09-08 17:27+0200\n"
+"PO-Revision-Date: 2019-10-11 23:52+0000\n"
+"Last-Translator: Bogdan Mateescu\n"
+"Language-Team: Romanian (http://www.transifex.com/django/django/language/"
 "ro/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -19,121 +22,33 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n==1?0:(((n%100>19)||((n%100==0)&&(n!=0)))?"
 "2:1));\n"
 
-#: views.py:58 views.py:60 views.py:62
-msgid "tag:"
-msgstr "tag:"
+msgid "Administrative Documentation"
+msgstr "Documentație Administrativă"
 
-#: views.py:93 views.py:95 views.py:97
-msgid "filter:"
-msgstr "filtru:"
-
-#: views.py:156 views.py:158 views.py:160
-msgid "view:"
-msgstr "cod de afișare:"
-
-#: views.py:188
-#, python-format
-msgid "App %r not found"
-msgstr "Applicația %r negăsită"
-
-#: views.py:195
-#, python-format
-msgid "Model %(model_name)r not found in app %(app_label)r"
-msgstr "Modelul %(model_name)r nu a fost găsit în aplicația %(app_label)r"
-
-#: views.py:207
-#, python-format
-msgid "the related `%(app_label)s.%(data_type)s` object"
-msgstr "obiectul înrudit `%(app_label)s.%(data_type)s`"
-
-#: views.py:207 views.py:226 views.py:231 views.py:245 views.py:259
-#: views.py:264
-msgid "model:"
-msgstr "model:"
-
-#: views.py:222 views.py:254
-#, python-format
-msgid "related `%(app_label)s.%(object_name)s` objects"
-msgstr "obiectele înrudite `%(app_label)s.%(object_name)s`"
-
-#: views.py:226 views.py:259
-#, python-format
-msgid "all %s"
-msgstr "toate %s"
-
-#: views.py:231 views.py:264
-#, python-format
-msgid "number of %s"
-msgstr "numărul de %s"
-
-#: views.py:269
-#, python-format
-msgid "Fields on %s objects"
-msgstr "Câmpuri în %s obiecte"
-
-#: views.py:361
-#, python-format
-msgid "%s does not appear to be a urlpattern object"
-msgstr "%s nu pare a fi un obiect urlpattern"
-
-#: templates/admin_doc/bookmarklets.html:6 templates/admin_doc/index.html:6
-#: templates/admin_doc/missing_docutils.html:6
-#: templates/admin_doc/model_detail.html:14
-#: templates/admin_doc/model_index.html:8
-#: templates/admin_doc/template_detail.html:6
-#: templates/admin_doc/template_filter_index.html:7
-#: templates/admin_doc/template_tag_index.html:7
-#: templates/admin_doc/view_detail.html:6
-#: templates/admin_doc/view_index.html:7
 msgid "Home"
 msgstr "Acasă"
 
-#: templates/admin_doc/bookmarklets.html:7 templates/admin_doc/index.html:7
-#: templates/admin_doc/missing_docutils.html:7
-#: templates/admin_doc/model_detail.html:15
-#: templates/admin_doc/model_index.html:9
-#: templates/admin_doc/template_detail.html:7
-#: templates/admin_doc/template_filter_index.html:8
-#: templates/admin_doc/template_tag_index.html:8
-#: templates/admin_doc/view_detail.html:7
-#: templates/admin_doc/view_index.html:8
 msgid "Documentation"
 msgstr "Documentație"
 
-#: templates/admin_doc/bookmarklets.html:8
 msgid "Bookmarklets"
 msgstr "Semne de carte"
 
-#: templates/admin_doc/bookmarklets.html:11
 msgid "Documentation bookmarklets"
 msgstr "Semne de carte pentru documentație"
 
-#: templates/admin_doc/bookmarklets.html:15
 msgid ""
-"\n"
-"<p class=\"help\">To install bookmarklets, drag the link to your bookmarks\n"
-"toolbar, or right-click the link and add it to your bookmarks. Now you can\n"
-"select the bookmarklet from any page in the site.  Note that some of these\n"
-"bookmarklets require you to be viewing the site from a computer designated\n"
-"as \"internal\" (talk to your system administrator if you aren't sure if\n"
-"your computer is \"internal\").</p>\n"
+"To install bookmarklets, drag the link to your bookmarks toolbar, or right-"
+"click the link and add it to your bookmarks. Now you can select the "
+"bookmarklet from any page in the site."
 msgstr ""
-"\n"
-"<p class=\"help\">Pentru a instala semne de carte, trageți link-ul în bara "
-"de\n"
-"semne de carte, sau clic dreapta pe link și adaugați la semne de carte. Acum "
-"puteți\n"
-"selecta semnul de carte din orice pagina a sitului. Notați că unele dintre\n"
-"aceste semne de carte sunt accesibile doar de pe un calculator desemnat ca\n"
-"\"intern\" (luați legătura cu administratorul sistemului dumneavoastră în "
-"caz că nu știți\n"
-"dacă acest calculator este \"intern\").</p>\n"
+"Pentru a instala semne de carte, trageți link-ul în bara de semne de carte, "
+"sau clic dreapta pe link și adăugați la semnele de carte. Acum puteți "
+"selecta semnul de carte din orice pagină."
 
-#: templates/admin_doc/bookmarklets.html:25
 msgid "Documentation for this page"
 msgstr "Documentație pentru pagina aceasta"
 
-#: templates/admin_doc/bookmarklets.html:26
 msgid ""
 "Jumps you from any page to the documentation for the view that generates "
 "that page."
@@ -141,63 +56,232 @@ msgstr ""
 "Vă trimite de la orice pagină către documentația pentru codul de afișare "
 "care generează acea pagină."
 
-#: templates/admin_doc/bookmarklets.html:28
-msgid "Show object ID"
-msgstr "Arată ID-ul obiectului"
-
-#: templates/admin_doc/bookmarklets.html:29
-msgid ""
-"Shows the content-type and unique ID for pages that represent a single "
-"object."
-msgstr ""
-"Arată tipul de conținut și ID-ul unic pentru paginile ce reprezintă un "
-"singur obiect."
-
-#: templates/admin_doc/bookmarklets.html:31
-msgid "Edit this object (current window)"
-msgstr "Modifică acest obiect (în fereastra curentă)"
-
-#: templates/admin_doc/bookmarklets.html:32
-msgid "Jumps to the admin page for pages that represent a single object."
-msgstr ""
-"Sare la pagina de administrare pentru pagini ce reprezintă un singur obiect."
-
-#: templates/admin_doc/bookmarklets.html:34
-msgid "Edit this object (new window)"
-msgstr "Modifică acest obiect (într-o fereastra nouă)"
-
-#: templates/admin_doc/bookmarklets.html:35
-msgid "As above, but opens the admin page in a new window."
-msgstr ""
-"La fel ca mai sus, dar deschide pagina de administrare într-o fereastră nouă"
-
-#: templates/admin_doc/model_detail.html:16
-#: templates/admin_doc/model_index.html:10
-msgid "Models"
-msgstr ""
-
-#: templates/admin_doc/template_detail.html:8
-msgid "Templates"
-msgstr ""
-
-#: templates/admin_doc/template_filter_index.html:9
-msgid "Filters"
-msgstr ""
-
-#: templates/admin_doc/template_tag_index.html:9
 msgid "Tags"
-msgstr ""
+msgstr "Taguri"
 
-#: templates/admin_doc/view_detail.html:8
-#: templates/admin_doc/view_index.html:9
+msgid "List of all the template tags and their functions."
+msgstr "Lista tuturor tagurilor din șabloane și funcțiile lor."
+
+msgid "Filters"
+msgstr "Filtre"
+
+msgid ""
+"Filters are actions which can be applied to variables in a template to alter "
+"the output."
+msgstr ""
+"Filtrele sunt acțiuni care pot fi aplicate variabilelor într-un șablon "
+"pentru a altera rezultatul."
+
+msgid "Models"
+msgstr "Modele"
+
+msgid ""
+"Models are descriptions of all the objects in the system and their "
+"associated fields. Each model has a list of fields which can be accessed as "
+"template variables"
+msgstr ""
+"Modelele sunt descrieri ale tuturor obiectelor în sistem și a câmpurilor "
+"asociate ale acestora. Fiecare model are o listă de câmpuri care pot fi "
+"accesate ca variabile în șabloane."
+
 msgid "Views"
+msgstr "Coduri de afișare"
+
+msgid ""
+"Each page on the public site is generated by a view. The view defines which "
+"template is used to generate the page and which objects are available to "
+"that template."
+msgstr ""
+"Fiecare pagină din pagina web este generată de un cod de afișare. Codul de "
+"afișare definește ce șablon este utlizat la generarea paginii și ce obiecte "
+"sunt disponibile acelui șablon."
+
+msgid "Tools for your browser to quickly access admin functionality."
+msgstr ""
+"Instrumente pentru browser pentru accesarea rapidă a funcționalității de "
+"administrare."
+
+msgid "Please install docutils"
+msgstr "Instalați vă rugăm docutils"
+
+#, python-format
+msgid ""
+"The admin documentation system requires Python's <a href=\"%(link)s"
+"\">docutils</a> library."
+msgstr ""
+"Sistemul de documentație administrativă are nevoie de librăria Python <a "
+"href=\"%(link)s\">docutils</a>."
+
+#, python-format
+msgid ""
+"Please ask your administrators to install <a href=\"%(link)s\">docutils</a>."
+msgstr "Rugați administratorii să instaleze <a href=\"%(link)s\">docutils</a>."
+
+#, python-format
+msgid "Model: %(name)s"
+msgstr "Model: %(name)s"
+
+msgid "Fields"
+msgstr "Câmpuri"
+
+msgid "Field"
+msgstr "Câmp"
+
+msgid "Type"
+msgstr "Tip"
+
+msgid "Description"
+msgstr "Descriere"
+
+msgid "Methods with arguments"
+msgstr "Metode cu argumente"
+
+msgid "Method"
+msgstr "Metodă"
+
+msgid "Arguments"
+msgstr "Argumente"
+
+msgid "Back to Model documentation"
+msgstr "Înapoi la Documentația Modelelor"
+
+msgid "Model documentation"
+msgstr "Documentația modelelor"
+
+msgid "Model groups"
+msgstr "Grupuri de modele"
+
+msgid "Templates"
+msgstr "Șabloane"
+
+#, python-format
+msgid "Template: %(name)s"
+msgstr "Șablonul: %(name)s"
+
+#, python-format
+msgid "Template: <q>%(name)s</q>"
 msgstr ""
 
-#: tests/__init__.py:23
-msgid "Boolean (Either True or False)"
-msgstr "Boolean (adevărat sau fals)"
-
-#: tests/__init__.py:33
+#. Translators: Search is not a verb here, it qualifies path (a search path)
 #, python-format
-msgid "Field of type: %(field_type)s"
-msgstr "Câmp de tip: %(field_type)s"
+msgid "Search path for template <q>%(name)s</q>:"
+msgstr ""
+
+msgid "(does not exist)"
+msgstr "(inexistent)"
+
+msgid "Back to Documentation"
+msgstr "Înapoi la Documentație"
+
+msgid "Template filters"
+msgstr "Filtre pentru șabloane"
+
+msgid "Template filter documentation"
+msgstr "Documentația filtrelor pentru șabloane"
+
+msgid "Built-in filters"
+msgstr "Filtre implicite"
+
+#, python-format
+msgid ""
+"To use these filters, put <code>%(code)s</code> in your template before "
+"using the filter."
+msgstr ""
+"Pentru a utiliza aceste filtre, puneți <code>%(code)s</code> în șablon "
+"înainte de utilizarea acestui filtru."
+
+msgid "Template tags"
+msgstr "Taguri pentru șabloane"
+
+msgid "Template tag documentation"
+msgstr "Documentația tagurilor pentru șabloane"
+
+msgid "Built-in tags"
+msgstr "Taguri implicite"
+
+#, python-format
+msgid ""
+"To use these tags, put <code>%(code)s</code> in your template before using "
+"the tag."
+msgstr ""
+"Pentru a utiliza aceste taguri, puneți <code>%(code)s</code> în șablon "
+"înainte de a utiliza tagul."
+
+#, python-format
+msgid "View: %(name)s"
+msgstr "Cod de afișare: %(name)s"
+
+msgid "Context:"
+msgstr "Context:"
+
+msgid "Templates:"
+msgstr "Șablonuri:"
+
+msgid "Back to View documentation"
+msgstr "Înapoi la Documentația Codurilor de afișare"
+
+msgid "View documentation"
+msgstr "Vezi documentația"
+
+msgid "Jump to namespace"
+msgstr "Mergeți la spațiul de nume"
+
+msgid "Empty namespace"
+msgstr "Spațiu de nume gol"
+
+#, python-format
+msgid "Views by namespace %(name)s"
+msgstr "Coduri de afișare după spațiul de nume %(name)s"
+
+msgid "Views by empty namespace"
+msgstr "Coduri de afișare după spațiu de nume gol"
+
+#, python-format
+msgid ""
+"\n"
+"    View function: <code>%(full_name)s</code>. Name: <code>%(url_name)s</"
+"code>.\n"
+msgstr ""
+"\n"
+"Funcția din codul de afișare: <code>%(full_name)s</code>. Nume: <code>"
+"%(url_name)s</code>.\n"
+
+msgid "tag:"
+msgstr "tag:"
+
+msgid "filter:"
+msgstr "filtru:"
+
+msgid "view:"
+msgstr "cod de afișare:"
+
+#, python-format
+msgid "App %(app_label)r not found"
+msgstr "Aplicația %(app_label)r nu a fost găsită"
+
+#, python-format
+msgid "Model %(model_name)r not found in app %(app_label)r"
+msgstr "Modelul %(model_name)r nu a fost găsit în aplicația %(app_label)r"
+
+msgid "model:"
+msgstr "model:"
+
+#, python-format
+msgid "the related `%(app_label)s.%(data_type)s` object"
+msgstr "obiectul înrudit `%(app_label)s.%(data_type)s`"
+
+#, python-format
+msgid "related `%(app_label)s.%(object_name)s` objects"
+msgstr "obiectele înrudite `%(app_label)s.%(object_name)s`"
+
+#, python-format
+msgid "all %s"
+msgstr "toate %s"
+
+#, python-format
+msgid "number of %s"
+msgstr "numărul de %s"
+
+#, python-format
+msgid "%s does not appear to be a urlpattern object"
+msgstr "%s nu pare a fi un obiect urlpattern"

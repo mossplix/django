@@ -10,13 +10,19 @@ editing content:
 * :class:`django.views.generic.edit.UpdateView`
 * :class:`django.views.generic.edit.DeleteView`
 
+.. seealso::
+
+    The :doc:`messages framework </ref/contrib/messages>` contains
+    :class:`~django.contrib.messages.views.SuccessMessageMixin`, which
+    facilitates presenting messages about successful form submissions.
+
 .. note::
 
     Some of the examples on this page assume that an ``Author`` model has been
     defined as follows in ``myapp/models.py``::
 
-        from django.core.urlresolvers import reverse
         from django.db import models
+        from django.urls import reverse
 
         class Author(models.Model):
             name = models.CharField(max_length=200)
@@ -24,8 +30,8 @@ editing content:
             def get_absolute_url(self):
                 return reverse('author-detail', kwargs={'pk': self.pk})
 
-FormView
---------
+``FormView``
+============
 
 .. class:: django.views.generic.edit.FormView
 
@@ -36,14 +42,13 @@ FormView
 
     This view inherits methods and attributes from the following views:
 
-    * :class:`django.views.generic.edit.FormView`
     * :class:`django.views.generic.base.TemplateResponseMixin`
     * ``django.views.generic.edit.BaseFormView``
     * :class:`django.views.generic.edit.FormMixin`
     * :class:`django.views.generic.edit.ProcessFormView`
     * :class:`django.views.generic.base.View`
 
-    **Example forms.py**::
+    **Example myapp/forms.py**::
 
         from django import forms
 
@@ -55,7 +60,7 @@ FormView
                 # send email using the self.cleaned_data dictionary
                 pass
 
-    **Example views.py**::
+    **Example myapp/views.py**::
 
         from myapp.forms import ContactForm
         from django.views.generic.edit import FormView
@@ -69,10 +74,20 @@ FormView
                 # This method is called when valid form data has been POSTed.
                 # It should return an HttpResponse.
                 form.send_email()
-                return super(ContactView, self).form_valid(form)
+                return super().form_valid(form)
 
-CreateView
-----------
+    **Example myapp/contact.html**:
+
+    .. code-block:: html+django
+
+        <form method="post">{% csrf_token %}
+            {{ form.as_p }}
+            <input type="submit" value="Send message">
+        </form>
+
+
+``CreateView``
+==============
 
 .. class:: django.views.generic.edit.CreateView
 
@@ -83,7 +98,6 @@ CreateView
 
     This view inherits methods and attributes from the following views:
 
-    * :class:`django.views.generic.edit.CreateView`
     * :class:`django.views.generic.detail.SingleObjectTemplateResponseMixin`
     * :class:`django.views.generic.base.TemplateResponseMixin`
     * ``django.views.generic.edit.BaseCreateView``
@@ -103,16 +117,32 @@ CreateView
         creating objects for the example ``Author`` model would cause the
         default ``template_name`` to be ``'myapp/author_create_form.html'``.
 
-    **Example views.py**::
+    .. attribute:: object
+
+        When using ``CreateView`` you have access to ``self.object``, which is
+        the object being created. If the object hasn't been created yet, the
+        value will be ``None``.
+
+    **Example myapp/views.py**::
 
         from django.views.generic.edit import CreateView
         from myapp.models import Author
 
         class AuthorCreate(CreateView):
             model = Author
+            fields = ['name']
 
-UpdateView
-----------
+    **Example myapp/author_form.html**:
+
+    .. code-block:: html+django
+
+        <form method="post">{% csrf_token %}
+            {{ form.as_p }}
+            <input type="submit" value="Save">
+        </form>
+
+``UpdateView``
+==============
 
 .. class:: django.views.generic.edit.UpdateView
 
@@ -125,7 +155,6 @@ UpdateView
 
     This view inherits methods and attributes from the following views:
 
-    * :class:`django.views.generic.edit.UpdateView`
     * :class:`django.views.generic.detail.SingleObjectTemplateResponseMixin`
     * :class:`django.views.generic.base.TemplateResponseMixin`
     * ``django.views.generic.edit.BaseUpdateView``
@@ -145,16 +174,32 @@ UpdateView
         updating objects for the example ``Author`` model would cause the
         default ``template_name`` to be ``'myapp/author_update_form.html'``.
 
-    **Example views.py**::
+    .. attribute:: object
+
+        When using ``UpdateView`` you have access to ``self.object``, which is
+        the object being updated.
+
+    **Example myapp/views.py**::
 
         from django.views.generic.edit import UpdateView
         from myapp.models import Author
 
         class AuthorUpdate(UpdateView):
             model = Author
+            fields = ['name']
+            template_name_suffix = '_update_form'
 
-DeleteView
-----------
+    **Example myapp/author_update_form.html**:
+
+    .. code-block:: html+django
+
+        <form method="post">{% csrf_token %}
+            {{ form.as_p }}
+            <input type="submit" value="Update">
+        </form>
+
+``DeleteView``
+==============
 
 .. class:: django.views.generic.edit.DeleteView
 
@@ -167,7 +212,6 @@ DeleteView
 
     This view inherits methods and attributes from the following views:
 
-    * :class:`django.views.generic.edit.DeleteView`
     * :class:`django.views.generic.detail.SingleObjectTemplateResponseMixin`
     * :class:`django.views.generic.base.TemplateResponseMixin`
     * ``django.views.generic.edit.BaseDeleteView``
@@ -186,13 +230,21 @@ DeleteView
         deleting objects for the example ``Author`` model would cause the
         default ``template_name`` to be ``'myapp/author_check_delete.html'``.
 
+    **Example myapp/views.py**::
 
-    **Example views.py**::
-
+        from django.urls import reverse_lazy
         from django.views.generic.edit import DeleteView
-        from django.core.urlresolvers import reverse_lazy
         from myapp.models import Author
 
         class AuthorDelete(DeleteView):
             model = Author
             success_url = reverse_lazy('author-list')
+
+    **Example myapp/author_confirm_delete.html**:
+
+    .. code-block:: html+django
+
+        <form method="post">{% csrf_token %}
+            <p>Are you sure you want to delete "{{ object }}"?</p>
+            <input type="submit" value="Confirm">
+        </form>

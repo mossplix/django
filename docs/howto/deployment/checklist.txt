@@ -29,6 +29,13 @@ you're releasing the source code for your project, a common practice is to
 publish suitable settings for development, and to use a private settings
 module for production.
 
+Run ``manage.py check --deploy``
+================================
+
+Some of the checks described below can be automated using the :option:`check
+--deploy` option. Be sure to run it against your production settings file as
+described in the option's documentation.
+
 Critical settings
 =================
 
@@ -78,14 +85,32 @@ you use a wildcard, you must perform your own validation of the ``Host`` HTTP
 header, or otherwise ensure that you aren't vulnerable to this category of
 attacks.
 
+You should also configure the Web server that sits in front of Django to
+validate the host. It should respond with a static error page or ignore
+requests for incorrect hosts instead of forwarding the request to Django. This
+way you'll avoid spurious errors in your Django logs (or emails if you have
+error reporting configured that way). For example, on nginx you might setup a
+default server to return "444 No Response" on an unrecognized host:
+
+.. code-block:: nginx
+
+    server {
+        listen 80 default_server;
+        return 444;
+    }
+
 :setting:`CACHES`
 -----------------
 
 If you're using a cache, connection parameters may be different in development
-and in production.
+and in production. Django defaults to per-process :ref:`local-memory caching
+<local-memory-caching>` which may not be desirable.
 
 Cache servers often have weak authentication. Make sure they only accept
 connections from your application servers.
+
+If you're using Memcached, consider using :ref:`cached sessions
+<cached-sessions-backend>` to improve performance.
 
 :setting:`DATABASES`
 --------------------
@@ -106,6 +131,11 @@ If you haven't set up backups for your database, do it right now!
 
 If your site sends emails, these values need to be set correctly.
 
+By default, Django sends email from webmaster@localhost and root@localhost.
+However, some mail providers reject email from these addresses. To use
+different sender addresses, modify the :setting:`DEFAULT_FROM_EMAIL` and
+:setting:`SERVER_EMAIL` settings.
+
 :setting:`STATIC_ROOT` and :setting:`STATIC_URL`
 ------------------------------------------------
 
@@ -119,8 +149,8 @@ See :doc:`/howto/static-files/index` for more information.
 ----------------------------------------------
 
 Media files are uploaded by your users. They're untrusted! Make sure your web
-server never attempt to interpret them. For instance, if a user uploads a
-``.php`` file , the web server shouldn't execute it.
+server never attempts to interpret them. For instance, if a user uploads a
+``.php`` file, the web server shouldn't execute it.
 
 Now is a good time to check your backup strategy for these files.
 
@@ -157,8 +187,18 @@ Performance optimizations
 Setting :setting:`DEBUG = False <DEBUG>` disables several features that are
 only useful in development. In addition, you can tune the following settings.
 
-:setting:`TEMPLATE_LOADERS`
----------------------------
+:setting:`CONN_MAX_AGE`
+-----------------------
+
+Enabling :ref:`persistent database connections
+<persistent-database-connections>` can result in a nice speed-up when
+connecting to the database accounts for a significant part of the request
+processing time.
+
+This helps a lot on virtualized hosts with limited network performance.
+
+:setting:`TEMPLATES`
+--------------------
 
 Enabling the cached template loader often improves performance drastically, as
 it avoids compiling each template every time it needs to be rendered. See the
@@ -189,17 +229,19 @@ See :doc:`/topics/logging` for details on logging.
 
 See :doc:`/howto/error-reporting` for details on error reporting by email.
 
-.. admonition: Error reporting by email doesn't scale very well
+.. admonition:: Error reporting by email doesn't scale very well
 
     Consider using an error monitoring system such as Sentry_ before your
     inbox is flooded by reports. Sentry can also aggregate logs.
 
-    .. _Sentry: http://sentry.readthedocs.org/en/latest/
+    .. _Sentry: https://docs.sentry.io/
 
-Miscellaneous
-=============
+Customize the default error views
+---------------------------------
 
-:setting:`ALLOWED_INCLUDE_ROOTS`
---------------------------------
-
-This setting is required if you're using the :ttag:`ssi` template tag.
+Django includes default views and templates for several HTTP error codes. You
+may want to override the default templates by creating the following templates
+in your root template directory: ``404.html``, ``500.html``, ``403.html``, and
+``400.html``. The :ref:`default error views <error-views>` that use these
+templates should suffice for 99% of Web applications, but you can
+:ref:`customize them <customizing-error-views>` as well.

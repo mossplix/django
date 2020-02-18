@@ -1,40 +1,23 @@
-from __future__ import unicode_literals
+from datetime import date, datetime
 
-from datetime import datetime, date
-import os
-import time
-
+from django.test import SimpleTestCase, override_settings
+from django.test.utils import TZ_SUPPORT, requires_tz_support
+from django.utils import dateformat, translation
 from django.utils.dateformat import format
-from django.utils import dateformat, translation, unittest
-from django.utils.timezone import utc
-from django.utils.tzinfo import FixedOffset, LocalTimezone
+from django.utils.timezone import (
+    get_default_timezone, get_fixed_timezone, make_aware, utc,
+)
 
 
-class DateFormatTests(unittest.TestCase):
+@override_settings(TIME_ZONE='Europe/Copenhagen')
+class DateFormatTests(SimpleTestCase):
+
     def setUp(self):
-        self.old_TZ = os.environ.get('TZ')
-        os.environ['TZ'] = 'Europe/Copenhagen'
         self._orig_lang = translation.get_language()
         translation.activate('en-us')
 
-        try:
-            # Check if a timezone has been set
-            time.tzset()
-            self.tz_tests = True
-        except AttributeError:
-            # No timezone available. Don't run the tests that require a TZ
-            self.tz_tests = False
-
     def tearDown(self):
         translation.activate(self._orig_lang)
-        if self.old_TZ is None:
-            del os.environ['TZ']
-        else:
-            os.environ['TZ'] = self.old_TZ
-
-        # Cleanup - force re-evaluation of TZ environment variable.
-        if self.tz_tests:
-            time.tzset()
 
     def test_date(self):
         d = date(2009, 5, 16)
@@ -44,18 +27,32 @@ class DateFormatTests(unittest.TestCase):
         dt = datetime(2009, 5, 16, 5, 30, 30)
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U'))), dt)
 
+    def test_naive_ambiguous_datetime(self):
+        # dt is ambiguous in Europe/Copenhagen. pytz raises an exception for
+        # the ambiguity, which results in an empty string.
+        dt = datetime(2015, 10, 25, 2, 30, 0)
+
+        # Try all formatters that involve self.timezone.
+        self.assertEqual(format(dt, 'I'), '')
+        self.assertEqual(format(dt, 'O'), '')
+        self.assertEqual(format(dt, 'T'), '')
+        self.assertEqual(format(dt, 'Z'), '')
+
+    @requires_tz_support
     def test_datetime_with_local_tzinfo(self):
-        ltz = LocalTimezone(datetime.now())
-        dt = datetime(2009, 5, 16, 5, 30, 30, tzinfo=ltz)
+        ltz = get_default_timezone()
+        dt = make_aware(datetime(2009, 5, 16, 5, 30, 30), ltz)
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U')), ltz), dt)
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U'))), dt.replace(tzinfo=None))
 
+    @requires_tz_support
     def test_datetime_with_tzinfo(self):
-        tz = FixedOffset(-510)
-        ltz = LocalTimezone(datetime.now())
-        dt = datetime(2009, 5, 16, 5, 30, 30, tzinfo=tz)
+        tz = get_fixed_timezone(-510)
+        ltz = get_default_timezone()
+        dt = make_aware(datetime(2009, 5, 16, 5, 30, 30), ltz)
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U')), tz), dt)
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U')), ltz), dt)
+        # astimezone() is safe here because the target timezone doesn't have DST
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U'))), dt.astimezone(ltz).replace(tzinfo=None))
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U')), tz).utctimetuple(), dt.utctimetuple())
         self.assertEqual(datetime.fromtimestamp(int(format(dt, 'U')), ltz).utctimetuple(), dt.utctimetuple())
@@ -119,16 +116,25 @@ class DateFormatTests(unittest.TestCase):
         the_future = datetime(2100, 10, 25, 0, 00)
         self.assertEqual(dateformat.format(the_future, r'Y'), '2100')
 
+    def test_day_of_year_leap(self):
+        self.assertEqual(dateformat.format(datetime(2000, 12, 31), 'z'), '366')
+
     def test_timezones(self):
         my_birthday = datetime(1979, 7, 8, 22, 00)
         summertime = datetime(2005, 10, 30, 1, 00)
         wintertime = datetime(2005, 10, 30, 4, 00)
         timestamp = datetime(2008, 5, 19, 11, 45, 23, 123456)
 
-        if self.tz_tests:
+        # 3h30m to the west of UTC
+        tz = get_fixed_timezone(-210)
+        aware_dt = datetime(2009, 5, 16, 5, 30, 30, tzinfo=tz)
+
+        if TZ_SUPPORT:
             self.assertEqual(dateformat.format(my_birthday, 'O'), '+0100')
-            self.assertEqual(dateformat.format(my_birthday, 'r'), 'Sun, 8 Jul 1979 22:00:00 +0100')
+            self.assertEqual(dateformat.format(my_birthday, 'r'), 'Sun, 08 Jul 1979 22:00:00 +0100')
             self.assertEqual(dateformat.format(my_birthday, 'T'), 'CET')
+            self.assertEqual(dateformat.format(my_birthday, 'e'), '')
+            self.assertEqual(dateformat.format(aware_dt, 'e'), '-0330')
             self.assertEqual(dateformat.format(my_birthday, 'U'), '300315600')
             self.assertEqual(dateformat.format(timestamp, 'u'), '123456')
             self.assertEqual(dateformat.format(my_birthday, 'Z'), '3600')
@@ -138,7 +144,24 @@ class DateFormatTests(unittest.TestCase):
             self.assertEqual(dateformat.format(wintertime, 'O'), '+0100')
 
         # Ticket #16924 -- We don't need timezone support to test this
-        # 3h30m to the west of UTC
-        tz = FixedOffset(-3*60 - 30)
-        dt = datetime(2009, 5, 16, 5, 30, 30, tzinfo=tz)
-        self.assertEqual(dateformat.format(dt, 'O'), '-0330')
+        self.assertEqual(dateformat.format(aware_dt, 'O'), '-0330')
+
+    def test_invalid_time_format_specifiers(self):
+        my_birthday = date(1984, 8, 7)
+
+        for specifier in ['a', 'A', 'f', 'g', 'G', 'h', 'H', 'i', 'P', 'r', 's', 'u']:
+            msg = (
+                "The format for date objects may not contain time-related "
+                "format specifiers (found '%s')." % specifier
+            )
+            with self.assertRaisesMessage(TypeError, msg):
+                dateformat.format(my_birthday, specifier)
+
+    def test_r_format_with_non_en_locale(self):
+        # Changing the locale doesn't change the "r" format.
+        dt = datetime(1979, 7, 8, 22, 00)
+        with translation.override('fr'):
+            self.assertEqual(
+                dateformat.format(dt, 'r'),
+                'Sun, 08 Jul 1979 22:00:00 +0100',
+            )

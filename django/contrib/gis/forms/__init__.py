@@ -1,2 +1,8 @@
-from django.forms import *
-from django.contrib.gis.forms.fields import GeometryField
+from django.forms import *  # NOQA
+
+from .fields import (  # NOQA
+    GeometryCollectionField, GeometryField, LineStringField,
+    MultiLineStringField, MultiPointField, MultiPolygonField, PointField,
+    PolygonField,
+)
+from .widgets import BaseGeometryWidget, OpenLayersWidget, OSMWidget  # NOQA

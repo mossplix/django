@@ -1,17 +1,20 @@
 """Tests for jslex."""
-# encoding: utf-8
 # originally from https://bitbucket.org/ned/jslex
 
-from django.test import TestCase
+from django.test import SimpleTestCase
 from django.utils.jslex import JsLexer, prepare_js_for_gettext
 
-class JsTokensTest(TestCase):
+
+class JsTokensTest(SimpleTestCase):
     LEX_CASES = [
         # ids
         ("a ABC $ _ a123", ["id a", "id ABC", "id $", "id _", "id a123"]),
-        (r"\u1234 abc\u0020 \u0065_\u0067", [r"id \u1234", r"id abc\u0020", r"id \u0065_\u0067"]),
+        ("\\u1234 abc\\u0020 \\u0065_\\u0067", ["id \\u1234", "id abc\\u0020", "id \\u0065_\\u0067"]),
         # numbers
-        ("123 1.234 0.123e-3 0 1E+40 1e1 .123", ["dnum 123", "dnum 1.234", "dnum 0.123e-3", "dnum 0", "dnum 1E+40", "dnum 1e1", "dnum .123"]),
+        ("123 1.234 0.123e-3 0 1E+40 1e1 .123", [
+            "dnum 123", "dnum 1.234", "dnum 0.123e-3", "dnum 0", "dnum 1E+40",
+            "dnum 1e1", "dnum .123",
+        ]),
         ("0x1 0xabCD 0XABcd", ["hnum 0x1", "hnum 0xabCD", "hnum 0XABcd"]),
         ("010 0377 090", ["onum 010", "onum 0377", "dnum 0", "dnum 90"]),
         ("0xa123ghi", ["hnum 0xa123", "id ghi"]),
@@ -21,8 +24,10 @@ class JsTokensTest(TestCase):
         ("true true_enough", ["reserved true", "id true_enough"]),
         # strings
         (''' 'hello' "hello" ''', ["string 'hello'", 'string "hello"']),
-        (r""" 'don\'t' "don\"t" '"' "'" '\'' "\"" """,
-         [r"""string 'don\'t'""", r'''string "don\"t"''', r"""string '"'""", r'''string "'"''', r"""string '\''""", r'''string "\""''']),
+        (r""" 'don\'t' "don\"t" '"' "'" '\'' "\"" """, [
+            r"""string 'don\'t'""", r'''string "don\"t"''', r"""string '"'""",
+            r'''string "'"''', r"""string '\''""", r'''string "\""'''
+        ]),
         (r'"ƃuıxǝ⅂ ʇdıɹɔsɐʌɐſ\""', [r'string "ƃuıxǝ⅂ ʇdıɹɔsɐʌɐſ\""']),
         # comments
         ("a//b", ["id a", "linecomment //b"]),
@@ -36,7 +41,7 @@ class JsTokensTest(TestCase):
         (r"a=/a*\[^/,1", ["id a", "punct =", r"regex /a*\[^/", "punct ,", "dnum 1"]),
         (r"a=/\//,1", ["id a", "punct =", r"regex /\//", "punct ,", "dnum 1"]),
 
-        # next two are from http://www.mozilla.org/js/language/js20-2002-04/rationale/syntax.html#regular-expressions
+        # next two are from https://www-archive.mozilla.org/js/language/js20-2002-04/rationale/syntax.html#regular-expressions  # NOQA
         ("""for (var x = a in foo && "</x>" || mot ? z:/x:3;x<5;y</g/i) {xyz(x++);}""",
             ["keyword for", "punct (", "keyword var", "id x", "punct =", "id a", "keyword in",
             "id foo", "punct &&", 'string "</x>"', "punct ||", "id mot", "punct ?", "id z",
@@ -52,7 +57,7 @@ class JsTokensTest(TestCase):
         # Various "illegal" regexes that are valid according to the std.
         (r"""/????/, /++++/, /[----]/ """, ["regex /????/", "punct ,", "regex /++++/", "punct ,", "regex /[----]/"]),
 
-        # Stress cases from http://stackoverflow.com/questions/5533925/what-javascript-constructs-does-jslex-incorrectly-lex/5573409#5573409
+        # Stress cases from https://stackoverflow.com/questions/5533925/what-javascript-constructs-does-jslex-incorrectly-lex/5573409#5573409  # NOQA
         (r"""/\[/""", [r"""regex /\[/"""]),
         (r"""/[i]/""", [r"""regex /[i]/"""]),
         (r"""/[\]]/""", [r"""regex /[\]]/"""]),
@@ -60,57 +65,62 @@ class JsTokensTest(TestCase):
         (r"""/a[\]]b/""", [r"""regex /a[\]]b/"""]),
         (r"""/[\]/]/gi""", [r"""regex /[\]/]/gi"""]),
         (r"""/\[[^\]]+\]/gi""", [r"""regex /\[[^\]]+\]/gi"""]),
-        ("""
+        (r"""
             rexl.re = {
-            NAME: /^(?!\d)(?:\w)+|^"(?:[^"]|"")+"/,
-            UNQUOTED_LITERAL: /^@(?:(?!\d)(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/,
+            NAME: /^(?![0-9])(?:\w)+|^"(?:[^"]|"")+"/,
+            UNQUOTED_LITERAL: /^@(?:(?![0-9])(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/,
             QUOTED_LITERAL: /^'(?:[^']|'')*'/,
             NUMERIC_LITERAL: /^[0-9]+(?:\.[0-9]*(?:[eE][-+][0-9]+)?)?/,
             SYMBOL: /^(?:==|=|<>|<=|<|>=|>|!~~|!~|~~|~|!==|!=|!~=|!~|!|&|\||\.|\:|,|\(|\)|\[|\]|\{|\}|\?|\:|;|@|\^|\/\+|\/|\*|\+|-)/
             };
-        """,
+        """,  # NOQA
         ["id rexl", "punct .", "id re", "punct =", "punct {",
-         "id NAME", "punct :", r"""regex /^(?!\d)(?:\w)+|^"(?:[^"]|"")+"/""", "punct ,",
-         "id UNQUOTED_LITERAL", "punct :", r"""regex /^@(?:(?!\d)(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/""", "punct ,",
+         "id NAME", "punct :", r"""regex /^(?![0-9])(?:\w)+|^"(?:[^"]|"")+"/""", "punct ,",
+         "id UNQUOTED_LITERAL", "punct :", r"""regex /^@(?:(?![0-9])(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/""",
+         "punct ,",
          "id QUOTED_LITERAL", "punct :", r"""regex /^'(?:[^']|'')*'/""", "punct ,",
          "id NUMERIC_LITERAL", "punct :", r"""regex /^[0-9]+(?:\.[0-9]*(?:[eE][-+][0-9]+)?)?/""", "punct ,",
-         "id SYMBOL", "punct :", r"""regex /^(?:==|=|<>|<=|<|>=|>|!~~|!~|~~|~|!==|!=|!~=|!~|!|&|\||\.|\:|,|\(|\)|\[|\]|\{|\}|\?|\:|;|@|\^|\/\+|\/|\*|\+|-)/""",
+         "id SYMBOL", "punct :", r"""regex /^(?:==|=|<>|<=|<|>=|>|!~~|!~|~~|~|!==|!=|!~=|!~|!|&|\||\.|\:|,|\(|\)|\[|\]|\{|\}|\?|\:|;|@|\^|\/\+|\/|\*|\+|-)/""",  # NOQA
          "punct }", "punct ;"
          ]),
 
-        ("""
+        (r"""
             rexl.re = {
-            NAME: /^(?!\d)(?:\w)+|^"(?:[^"]|"")+"/,
-            UNQUOTED_LITERAL: /^@(?:(?!\d)(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/,
+            NAME: /^(?![0-9])(?:\w)+|^"(?:[^"]|"")+"/,
+            UNQUOTED_LITERAL: /^@(?:(?![0-9])(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/,
             QUOTED_LITERAL: /^'(?:[^']|'')*'/,
             NUMERIC_LITERAL: /^[0-9]+(?:\.[0-9]*(?:[eE][-+][0-9]+)?)?/,
             SYMBOL: /^(?:==|=|<>|<=|<|>=|>|!~~|!~|~~|~|!==|!=|!~=|!~|!|&|\||\.|\:|,|\(|\)|\[|\]|\{|\}|\?|\:|;|@|\^|\/\+|\/|\*|\+|-)/
             };
             str = '"';
-        """,
+        """,  # NOQA
         ["id rexl", "punct .", "id re", "punct =", "punct {",
-         "id NAME", "punct :", r"""regex /^(?!\d)(?:\w)+|^"(?:[^"]|"")+"/""", "punct ,",
-         "id UNQUOTED_LITERAL", "punct :", r"""regex /^@(?:(?!\d)(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/""", "punct ,",
+         "id NAME", "punct :", r"""regex /^(?![0-9])(?:\w)+|^"(?:[^"]|"")+"/""", "punct ,",
+         "id UNQUOTED_LITERAL", "punct :", r"""regex /^@(?:(?![0-9])(?:\w|\:)+|^"(?:[^"]|"")+")\[[^\]]+\]/""",
+         "punct ,",
          "id QUOTED_LITERAL", "punct :", r"""regex /^'(?:[^']|'')*'/""", "punct ,",
          "id NUMERIC_LITERAL", "punct :", r"""regex /^[0-9]+(?:\.[0-9]*(?:[eE][-+][0-9]+)?)?/""", "punct ,",
-         "id SYMBOL", "punct :", r"""regex /^(?:==|=|<>|<=|<|>=|>|!~~|!~|~~|~|!==|!=|!~=|!~|!|&|\||\.|\:|,|\(|\)|\[|\]|\{|\}|\?|\:|;|@|\^|\/\+|\/|\*|\+|-)/""",
+         "id SYMBOL", "punct :", r"""regex /^(?:==|=|<>|<=|<|>=|>|!~~|!~|~~|~|!==|!=|!~=|!~|!|&|\||\.|\:|,|\(|\)|\[|\]|\{|\}|\?|\:|;|@|\^|\/\+|\/|\*|\+|-)/""",   # NOQA
          "punct }", "punct ;",
          "id str", "punct =", """string '"'""", "punct ;",
          ]),
 
         (r""" this._js = "e.str(\"" + this.value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + "\")"; """,
-         ["keyword this", "punct .", "id _js", "punct =", r'''string "e.str(\""''', "punct +", "keyword this", "punct .",
-          "id value", "punct .", "id replace", "punct (", r"regex /\\/g", "punct ,", r'string "\\\\"', "punct )",
+         ["keyword this", "punct .", "id _js", "punct =", r'''string "e.str(\""''', "punct +", "keyword this",
+          "punct .", "id value", "punct .", "id replace", "punct (", r"regex /\\/g", "punct ,", r'string "\\\\"',
+          "punct )",
           "punct .", "id replace", "punct (", r'regex /"/g', "punct ,", r'string "\\\""', "punct )", "punct +",
           r'string "\")"', "punct ;"]),
-        ]
+    ]
+
 
 def make_function(input, toks):
     def test_func(self):
         lexer = JsLexer()
         result = ["%s %s" % (name, tok) for name, tok in lexer.lex(input) if name != 'ws']
-        self.assertListEqual(result, toks)
+        self.assertEqual(result, toks)
     return test_func
+
 
 for i, (input, toks) in enumerate(JsTokensTest.LEX_CASES):
     setattr(JsTokensTest, "test_case_%d" % i, make_function(input, toks))
@@ -195,8 +205,8 @@ GETTEXT_CASES = (
             for (var x = a in foo && "</x>" || mot ? z/x:3;x<5;y<"REGEX") {xyz(x++);}
         """
     ), (
-        r"""
-            \u1234xyz = gettext('Hello there');
+        """
+            \\u1234xyz = gettext('Hello there');
         """, r"""
             Uu1234xyz = gettext("Hello there");
         """
@@ -204,13 +214,15 @@ GETTEXT_CASES = (
 )
 
 
-class JsToCForGettextTest(TestCase):
+class JsToCForGettextTest(SimpleTestCase):
     pass
+
 
 def make_function(js, c):
     def test_func(self):
-        self.assertMultiLineEqual(prepare_js_for_gettext(js), c)
+        self.assertEqual(prepare_js_for_gettext(js), c)
     return test_func
+
 
 for i, pair in enumerate(GETTEXT_CASES):
     setattr(JsToCForGettextTest, "test_case_%d" % i, make_function(*pair))

@@ -1,74 +1,26 @@
-from __future__ import unicode_literals
-
-import json
-
 from django.db import models
-from django.utils.encoding import force_text
-from django.utils import six
-from django.utils.encoding import python_2_unicode_compatible
+from django.db.models.query_utils import DeferredAttribute
 
 
-@python_2_unicode_compatible
-class Small(object):
-    """
-    A simple class to show that non-trivial Python objects can be used as
-    attributes.
-    """
-    def __init__(self, first, second):
-        self.first, self.second = first, second
-
-    def __str__(self):
-        return '%s%s' % (force_text(self.first), force_text(self.second))
-
-class SmallField(six.with_metaclass(models.SubfieldBase, models.Field)):
-    """
-    Turns the "Small" class into a Django field. Because of the similarities
-    with normal character fields and the fact that Small.__unicode__ does
-    something sensible, we don't need to implement a lot here.
-    """
-
-    def __init__(self, *args, **kwargs):
-        kwargs['max_length'] = 2
-        super(SmallField, self).__init__(*args, **kwargs)
-
-    def get_internal_type(self):
-        return 'CharField'
-
-    def to_python(self, value):
-        if isinstance(value, Small):
-            return value
-        return Small(value[0], value[1])
-
-    def get_db_prep_save(self, value, connection):
-        return six.text_type(value)
-
-    def get_prep_lookup(self, lookup_type, value):
-        if lookup_type == 'exact':
-            return force_text(value)
-        if lookup_type == 'in':
-            return [force_text(v) for v in value]
-        if lookup_type == 'isnull':
-            return []
-        raise TypeError('Invalid lookup type: %r' % lookup_type)
-
-class SmallerField(SmallField):
-    pass
+class CustomTypedField(models.TextField):
+    def db_type(self, connection):
+        return 'custom_field'
 
 
-class JSONField(six.with_metaclass(models.SubfieldBase, models.TextField)):
+class CustomDeferredAttribute(DeferredAttribute):
+    def __get__(self, instance, cls=None):
+        self._count_call(instance, 'get')
+        return super().__get__(instance, cls)
 
-    description = ("JSONField automatically serializes and desializes values to "
-        "and from JSON.")
+    def __set__(self, instance, value):
+        self._count_call(instance, 'set')
+        instance.__dict__[self.field.attname] = value
 
-    def to_python(self, value):
-        if not value:
-            return None
+    def _count_call(self, instance, get_or_set):
+        count_attr = '_%s_%s_count' % (self.field.attname, get_or_set)
+        count = getattr(instance, count_attr, 0)
+        setattr(instance, count_attr, count + 1)
 
-        if isinstance(value, six.string_types):
-            value = json.loads(value)
-        return value
 
-    def get_db_prep_save(self, value, connection):
-        if value is None:
-            return None
-        return json.dumps(value)
+class CustomDescriptorField(models.CharField):
+    descriptor_class = CustomDeferredAttribute

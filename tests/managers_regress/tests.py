@@ -1,23 +1,11 @@
-from __future__ import absolute_import
-import copy
-
-from django.conf import settings
 from django.db import models
-from django.db.models.loading import cache
-from django.test import TestCase
-from django.test.utils import override_settings
+from django.template import Context, Template
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.utils import isolate_apps
 
 from .models import (
-    Child1,
-    Child2,
-    Child3,
-    Child4,
-    Child5,
-    Child6,
-    Child7,
-    AbstractBase1,
-    AbstractBase2,
-    AbstractBase3,
+    AbstractBase1, AbstractBase2, AbstractBase3, Child1, Child2, Child3,
+    Child4, Child5, Child6, Child7, RelatedModel, RelationModel,
 )
 
 
@@ -52,144 +40,248 @@ class ManagersRegressionTests(TestCase):
         # Since Child6 inherits from Child4, the corresponding rows from f1 and
         # f2 also appear here. This is the expected result.
         self.assertQuerysetEqual(Child4._default_manager.order_by('data'), [
-                "<Child4: d1>",
-                "<Child4: d2>",
-                "<Child4: f1>",
-                "<Child4: f2>"
-            ]
-        )
-        self.assertQuerysetEqual(Child4.manager1.all(), [
-                "<Child4: d1>",
-                "<Child4: f1>"
-            ],
-            ordered=False
-        )
+            "<Child4: d1>",
+            "<Child4: d2>",
+            "<Child4: f1>",
+            "<Child4: f2>",
+        ])
+        self.assertQuerysetEqual(Child4.manager1.all(), ["<Child4: d1>", "<Child4: f1>"], ordered=False)
         self.assertQuerysetEqual(Child5._default_manager.all(), ["<Child5: fred>"])
-        self.assertQuerysetEqual(Child6._default_manager.all(), ["<Child6: f1>"])
-        self.assertQuerysetEqual(Child7._default_manager.order_by('name'), [
-                "<Child7: barney>",
-                "<Child7: fred>"
-            ]
+        self.assertQuerysetEqual(Child6._default_manager.all(), ["<Child6: f1>", "<Child6: f2>"], ordered=False)
+        self.assertQuerysetEqual(
+            Child7._default_manager.order_by('name'),
+            ["<Child7: barney>", "<Child7: fred>"]
         )
 
     def test_abstract_manager(self):
         # Accessing the manager on an abstract model should
         # raise an attribute error with an appropriate message.
-        try:
+        # This error message isn't ideal, but if the model is abstract and
+        # a lot of the class instantiation logic isn't invoked; if the
+        # manager is implied, then we don't get a hook to install the
+        # error-raising manager.
+        msg = "type object 'AbstractBase3' has no attribute 'objects'"
+        with self.assertRaisesMessage(AttributeError, msg):
             AbstractBase3.objects.all()
-            self.fail('Should raise an AttributeError')
-        except AttributeError as e:
-            # This error message isn't ideal, but if the model is abstract and
-            # a lot of the class instantiation logic isn't invoked; if the
-            # manager is implied, then we don't get a hook to install the
-            # error-raising manager.
-            self.assertEqual(str(e), "type object 'AbstractBase3' has no attribute 'objects'")
 
     def test_custom_abstract_manager(self):
-        # Accessing the manager on an abstract model with an custom
+        # Accessing the manager on an abstract model with a custom
         # manager should raise an attribute error with an appropriate
         # message.
-        try:
+        msg = "Manager isn't available; AbstractBase2 is abstract"
+        with self.assertRaisesMessage(AttributeError, msg):
             AbstractBase2.restricted.all()
-            self.fail('Should raise an AttributeError')
-        except AttributeError as e:
-            self.assertEqual(str(e), "Manager isn't available; AbstractBase2 is abstract")
 
     def test_explicit_abstract_manager(self):
         # Accessing the manager on an abstract model with an explicit
         # manager should raise an attribute error with an appropriate
         # message.
-        try:
+        msg = "Manager isn't available; AbstractBase1 is abstract"
+        with self.assertRaisesMessage(AttributeError, msg):
             AbstractBase1.objects.all()
-            self.fail('Should raise an AttributeError')
-        except AttributeError as e:
-            self.assertEqual(str(e), "Manager isn't available; AbstractBase1 is abstract")
 
+    @override_settings(TEST_SWAPPABLE_MODEL='managers_regress.Parent')
+    @isolate_apps('managers_regress')
     def test_swappable_manager(self):
-        try:
-            # This test adds dummy models to the app cache. These
-            # need to be removed in order to prevent bad interactions
-            # with the flush operation in other tests.
-            old_app_models = copy.deepcopy(cache.app_models)
-            old_app_store = copy.deepcopy(cache.app_store)
+        class SwappableModel(models.Model):
+            class Meta:
+                swappable = 'TEST_SWAPPABLE_MODEL'
 
-            settings.TEST_SWAPPABLE_MODEL = 'managers_regress.Parent'
+        # Accessing the manager on a swappable model should
+        # raise an attribute error with a helpful message
+        msg = (
+            "Manager isn't available; 'managers_regress.SwappableModel' "
+            "has been swapped for 'managers_regress.Parent'"
+        )
+        with self.assertRaisesMessage(AttributeError, msg):
+            SwappableModel.objects.all()
 
-            class SwappableModel(models.Model):
-                class Meta:
-                    swappable = 'TEST_SWAPPABLE_MODEL'
-
-            # Accessing the manager on a swappable model should
-            # raise an attribute error with a helpful message
-            try:
-                SwappableModel.objects.all()
-                self.fail('Should raise an AttributeError')
-            except AttributeError as e:
-                self.assertEqual(str(e), "Manager isn't available; SwappableModel has been swapped for 'managers_regress.Parent'")
-
-        finally:
-            del settings.TEST_SWAPPABLE_MODEL
-            cache.app_models = old_app_models
-            cache.app_store = old_app_store
-
+    @override_settings(TEST_SWAPPABLE_MODEL='managers_regress.Parent')
+    @isolate_apps('managers_regress')
     def test_custom_swappable_manager(self):
-        try:
-            # This test adds dummy models to the app cache. These
-            # need to be removed in order to prevent bad interactions
-            # with the flush operation in other tests.
-            old_app_models = copy.deepcopy(cache.app_models)
-            old_app_store = copy.deepcopy(cache.app_store)
+        class SwappableModel(models.Model):
+            stuff = models.Manager()
 
-            settings.TEST_SWAPPABLE_MODEL = 'managers_regress.Parent'
+            class Meta:
+                swappable = 'TEST_SWAPPABLE_MODEL'
 
-            class SwappableModel(models.Model):
+        # Accessing the manager on a swappable model with an
+        # explicit manager should raise an attribute error with a
+        # helpful message
+        msg = (
+            "Manager isn't available; 'managers_regress.SwappableModel' "
+            "has been swapped for 'managers_regress.Parent'"
+        )
+        with self.assertRaisesMessage(AttributeError, msg):
+            SwappableModel.stuff.all()
 
-                stuff = models.Manager()
-
-                class Meta:
-                    swappable = 'TEST_SWAPPABLE_MODEL'
-
-            # Accessing the manager on a swappable model with an
-            # explicit manager should raise an attribute error with a
-            # helpful message
-            try:
-                SwappableModel.stuff.all()
-                self.fail('Should raise an AttributeError')
-            except AttributeError as e:
-                self.assertEqual(str(e), "Manager isn't available; SwappableModel has been swapped for 'managers_regress.Parent'")
-
-        finally:
-            del settings.TEST_SWAPPABLE_MODEL
-            cache.app_models = old_app_models
-            cache.app_store = old_app_store
-
+    @override_settings(TEST_SWAPPABLE_MODEL='managers_regress.Parent')
+    @isolate_apps('managers_regress')
     def test_explicit_swappable_manager(self):
-        try:
-            # This test adds dummy models to the app cache. These
-            # need to be removed in order to prevent bad interactions
-            # with the flush operation in other tests.
-            old_app_models = copy.deepcopy(cache.app_models)
-            old_app_store = copy.deepcopy(cache.app_store)
+        class SwappableModel(models.Model):
+            objects = models.Manager()
 
-            settings.TEST_SWAPPABLE_MODEL = 'managers_regress.Parent'
+            class Meta:
+                swappable = 'TEST_SWAPPABLE_MODEL'
 
-            class SwappableModel(models.Model):
+        # Accessing the manager on a swappable model with an
+        # explicit manager should raise an attribute error with a
+        # helpful message
+        msg = (
+            "Manager isn't available; 'managers_regress.SwappableModel' "
+            "has been swapped for 'managers_regress.Parent'"
+        )
+        with self.assertRaisesMessage(AttributeError, msg):
+            SwappableModel.objects.all()
 
-                objects = models.Manager()
+    def test_regress_3871(self):
+        related = RelatedModel.objects.create()
 
-                class Meta:
-                    swappable = 'TEST_SWAPPABLE_MODEL'
+        relation = RelationModel()
+        relation.fk = related
+        relation.gfk = related
+        relation.save()
+        relation.m2m.add(related)
 
-            # Accessing the manager on a swappable model with an
-            # explicit manager should raise an attribute error with a
-            # helpful message
-            try:
-                SwappableModel.objects.all()
-                self.fail('Should raise an AttributeError')
-            except AttributeError as e:
-                self.assertEqual(str(e), "Manager isn't available; SwappableModel has been swapped for 'managers_regress.Parent'")
+        t = Template('{{ related.test_fk.all.0 }}{{ related.test_gfk.all.0 }}{{ related.test_m2m.all.0 }}')
 
-        finally:
-            del settings.TEST_SWAPPABLE_MODEL
-            cache.app_models = old_app_models
-            cache.app_store = old_app_store
+        self.assertEqual(
+            t.render(Context({'related': related})),
+            ''.join([str(relation.pk)] * 3),
+        )
+
+    def test_field_can_be_called_exact(self):
+        # Make sure related managers core filters don't include an
+        # explicit `__exact` lookup that could be interpreted as a
+        # reference to a foreign `exact` field. refs #23940.
+        related = RelatedModel.objects.create(exact=False)
+        relation = related.test_fk.create()
+        self.assertEqual(related.test_fk.get(), relation)
+
+
+@isolate_apps('managers_regress')
+class TestManagerInheritance(SimpleTestCase):
+    def test_implicit_inheritance(self):
+        class CustomManager(models.Manager):
+            pass
+
+        class AbstractModel(models.Model):
+            custom_manager = CustomManager()
+
+            class Meta:
+                abstract = True
+
+        class PlainModel(models.Model):
+            custom_manager = CustomManager()
+
+        self.assertIsInstance(PlainModel._base_manager, models.Manager)
+        self.assertIsInstance(PlainModel._default_manager, CustomManager)
+
+        class ModelWithAbstractParent(AbstractModel):
+            pass
+
+        self.assertIsInstance(ModelWithAbstractParent._base_manager, models.Manager)
+        self.assertIsInstance(ModelWithAbstractParent._default_manager, CustomManager)
+
+        class ProxyModel(PlainModel):
+            class Meta:
+                proxy = True
+
+        self.assertIsInstance(ProxyModel._base_manager, models.Manager)
+        self.assertIsInstance(ProxyModel._default_manager, CustomManager)
+
+        class MTIModel(PlainModel):
+            pass
+
+        self.assertIsInstance(MTIModel._base_manager, models.Manager)
+        self.assertIsInstance(MTIModel._default_manager, CustomManager)
+
+    def test_default_manager_inheritance(self):
+        class CustomManager(models.Manager):
+            pass
+
+        class AbstractModel(models.Model):
+            another_manager = models.Manager()
+            custom_manager = CustomManager()
+
+            class Meta:
+                default_manager_name = 'custom_manager'
+                abstract = True
+
+        class PlainModel(models.Model):
+            another_manager = models.Manager()
+            custom_manager = CustomManager()
+
+            class Meta:
+                default_manager_name = 'custom_manager'
+
+        self.assertIsInstance(PlainModel._default_manager, CustomManager)
+
+        class ModelWithAbstractParent(AbstractModel):
+            pass
+
+        self.assertIsInstance(ModelWithAbstractParent._default_manager, CustomManager)
+
+        class ProxyModel(PlainModel):
+            class Meta:
+                proxy = True
+
+        self.assertIsInstance(ProxyModel._default_manager, CustomManager)
+
+        class MTIModel(PlainModel):
+            pass
+
+        self.assertIsInstance(MTIModel._default_manager, CustomManager)
+
+    def test_base_manager_inheritance(self):
+        class CustomManager(models.Manager):
+            pass
+
+        class AbstractModel(models.Model):
+            another_manager = models.Manager()
+            custom_manager = CustomManager()
+
+            class Meta:
+                base_manager_name = 'custom_manager'
+                abstract = True
+
+        class PlainModel(models.Model):
+            another_manager = models.Manager()
+            custom_manager = CustomManager()
+
+            class Meta:
+                base_manager_name = 'custom_manager'
+
+        self.assertIsInstance(PlainModel._base_manager, CustomManager)
+
+        class ModelWithAbstractParent(AbstractModel):
+            pass
+
+        self.assertIsInstance(ModelWithAbstractParent._base_manager, CustomManager)
+
+        class ProxyModel(PlainModel):
+            class Meta:
+                proxy = True
+
+        self.assertIsInstance(ProxyModel._base_manager, CustomManager)
+
+        class MTIModel(PlainModel):
+            pass
+
+        self.assertIsInstance(MTIModel._base_manager, CustomManager)
+
+    def test_manager_no_duplicates(self):
+        class CustomManager(models.Manager):
+            pass
+
+        class AbstractModel(models.Model):
+            custom_manager = models.Manager()
+
+            class Meta:
+                abstract = True
+
+        class TestModel(AbstractModel):
+            custom_manager = CustomManager()
+
+        self.assertEqual(TestModel._meta.managers, (TestModel.custom_manager,))
+        self.assertEqual(TestModel._meta.managers_map, {'custom_manager': TestModel.custom_manager})

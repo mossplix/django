@@ -2,23 +2,19 @@
 Views and functions for serving static files. These are only to be used
 during development, and SHOULD NOT be used in a production setting.
 """
-from __future__ import unicode_literals
-
 import mimetypes
-import os
-import stat
 import posixpath
 import re
-try:
-    from urllib.parse import unquote
-except ImportError:     # Python 2
-    from urllib import unquote
+from pathlib import Path
 
-from django.http import (CompatibleStreamingHttpResponse, Http404,
-    HttpResponse, HttpResponseRedirect, HttpResponseNotModified)
-from django.template import loader, Template, Context, TemplateDoesNotExist
+from django.http import (
+    FileResponse, Http404, HttpResponse, HttpResponseNotModified,
+)
+from django.template import Context, Engine, TemplateDoesNotExist, loader
+from django.utils._os import safe_join
 from django.utils.http import http_date, parse_http_date
-from django.utils.translation import ugettext as _, ugettext_noop
+from django.utils.translation import gettext as _, gettext_lazy
+
 
 def serve(request, path, document_root=None, show_indexes=False):
     """
@@ -26,7 +22,9 @@ def serve(request, path, document_root=None, show_indexes=False):
 
     To use, put a URL pattern such as::
 
-        (r'^(?P<path>.*)$', 'django.views.static.serve', {'document_root' : '/path/to/my/files/'})
+        from django.views.static import serve
+
+        path('<path:path>', serve, {'document_root': '/path/to/my/files/'})
 
     in your URLconf. You must provide the ``document_root`` param. You may
     also set ``show_indexes`` to ``True`` if you'd like to serve a basic index
@@ -34,40 +32,23 @@ def serve(request, path, document_root=None, show_indexes=False):
     but if you'd like to override it, you can create a template called
     ``static/directory_index.html``.
     """
-    path = posixpath.normpath(unquote(path))
-    path = path.lstrip('/')
-    newpath = ''
-    for part in path.split('/'):
-        if not part:
-            # Strip empty path components.
-            continue
-        drive, part = os.path.splitdrive(part)
-        head, part = os.path.split(part)
-        if part in (os.curdir, os.pardir):
-            # Strip '.' and '..' in path.
-            continue
-        newpath = os.path.join(newpath, part).replace('\\', '/')
-    if newpath and path != newpath:
-        return HttpResponseRedirect(newpath)
-    fullpath = os.path.join(document_root, newpath)
-    if os.path.isdir(fullpath):
+    path = posixpath.normpath(path).lstrip('/')
+    fullpath = Path(safe_join(document_root, path))
+    if fullpath.is_dir():
         if show_indexes:
-            return directory_index(newpath, fullpath)
+            return directory_index(path, fullpath)
         raise Http404(_("Directory indexes are not allowed here."))
-    if not os.path.exists(fullpath):
-        raise Http404(_('"%(path)s" does not exist') % {'path': fullpath})
+    if not fullpath.exists():
+        raise Http404(_('“%(path)s” does not exist') % {'path': fullpath})
     # Respect the If-Modified-Since header.
-    statobj = os.stat(fullpath)
+    statobj = fullpath.stat()
     if not was_modified_since(request.META.get('HTTP_IF_MODIFIED_SINCE'),
                               statobj.st_mtime, statobj.st_size):
         return HttpResponseNotModified()
-    content_type, encoding = mimetypes.guess_type(fullpath)
+    content_type, encoding = mimetypes.guess_type(str(fullpath))
     content_type = content_type or 'application/octet-stream'
-    response = CompatibleStreamingHttpResponse(open(fullpath, 'rb'),
-                                               content_type=content_type)
+    response = FileResponse(fullpath.open('rb'), content_type=content_type)
     response["Last-Modified"] = http_date(statobj.st_mtime)
-    if stat.S_ISREG(statobj.st_mode):
-        response["Content-Length"] = statobj.st_size
     if encoding:
         response["Content-Encoding"] = encoding
     return response
@@ -78,17 +59,17 @@ DEFAULT_DIRECTORY_INDEX_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
-    <meta http-equiv="Content-Language" content="en-us" />
-    <meta name="robots" content="NONE,NOARCHIVE" />
-    <title>{% blocktrans %}Index of {{ directory }}{% endblocktrans %}</title>
+    <meta http-equiv="Content-type" content="text/html; charset=utf-8">
+    <meta http-equiv="Content-Language" content="en-us">
+    <meta name="robots" content="NONE,NOARCHIVE">
+    <title>{% blocktranslate %}Index of {{ directory }}{% endblocktranslate %}</title>
   </head>
   <body>
-    <h1>{% blocktrans %}Index of {{ directory }}{% endblocktrans %}</h1>
+    <h1>{% blocktranslate %}Index of {{ directory }}{% endblocktranslate %}</h1>
     <ul>
-      {% ifnotequal directory "/" %}
+      {% if directory != "/" %}
       <li><a href="../">../</a></li>
-      {% endifnotequal %}
+      {% endif %}
       {% for f in file_list %}
       <li><a href="{{ f|urlencode }}">{{ f }}</a></li>
       {% endfor %}
@@ -96,25 +77,33 @@ DEFAULT_DIRECTORY_INDEX_TEMPLATE = """
   </body>
 </html>
 """
-template_translatable = ugettext_noop("Index of %(directory)s")
+template_translatable = gettext_lazy("Index of %(directory)s")
+
 
 def directory_index(path, fullpath):
     try:
-        t = loader.select_template(['static/directory_index.html',
-                'static/directory_index'])
+        t = loader.select_template([
+            'static/directory_index.html',
+            'static/directory_index',
+        ])
     except TemplateDoesNotExist:
-        t = Template(DEFAULT_DIRECTORY_INDEX_TEMPLATE, name='Default directory index template')
+        t = Engine(libraries={'i18n': 'django.templatetags.i18n'}).from_string(DEFAULT_DIRECTORY_INDEX_TEMPLATE)
+        c = Context()
+    else:
+        c = {}
     files = []
-    for f in os.listdir(fullpath):
-        if not f.startswith('.'):
-            if os.path.isdir(os.path.join(fullpath, f)):
-                f += '/'
-            files.append(f)
-    c = Context({
-        'directory' : path + '/',
-        'file_list' : files,
+    for f in fullpath.iterdir():
+        if not f.name.startswith('.'):
+            url = str(f.relative_to(fullpath))
+            if f.is_dir():
+                url += '/'
+            files.append(url)
+    c.update({
+        'directory': path + '/',
+        'file_list': files,
     })
     return HttpResponse(t.render(c))
+
 
 def was_modified_since(header=None, mtime=0, size=0):
     """

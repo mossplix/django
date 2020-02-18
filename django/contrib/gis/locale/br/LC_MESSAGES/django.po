@@ -1,92 +1,91 @@
 # This file is distributed under the same license as the Django package.
 #
 # Translators:
-# Fulup  <fulup.jakez@gmail.com>, 2012.
+# Fulup <fulup.jakez@gmail.com>, 2012
+# Irriep Nala Novram <allannkorh@yahoo.fr>, 2019
 msgid ""
 msgstr ""
-"Project-Id-Version: Django\n"
+"Project-Id-Version: django\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2012-10-15 10:56+0200\n"
-"PO-Revision-Date: 2012-06-29 10:58+0000\n"
-"Last-Translator: Fulup <fulup.jakez@gmail.com>\n"
-"Language-Team: Breton (http://www.transifex.com/projects/p/django/language/"
-"br/)\n"
+"POT-Creation-Date: 2017-01-19 16:49+0100\n"
+"PO-Revision-Date: 2019-03-12 14:10+0000\n"
+"Last-Translator: Irriep Nala Novram <allannkorh@yahoo.fr>\n"
+"Language-Team: Breton (http://www.transifex.com/django/django/language/br/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Language: br\n"
-"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+"Plural-Forms: nplurals=5; plural=((n%10 == 1) && (n%100 != 11) && (n%100 !"
+"=71) && (n%100 !=91) ? 0 :(n%10 == 2) && (n%100 != 12) && (n%100 !=72) && (n"
+"%100 !=92) ? 1 :(n%10 ==3 || n%10==4 || n%10==9) && (n%100 < 10 || n% 100 > "
+"19) && (n%100 < 70 || n%100 > 79) && (n%100 < 90 || n%100 > 99) ? 2 :(n != 0 "
+"&& n % 1000000 == 0) ? 3 : 4);\n"
 
-#: views.py:9
-msgid "No feeds are registered."
+msgid "GIS"
 msgstr ""
 
-#: views.py:19
-#, python-format
-msgid "Slug %r isn't registered."
+msgid "The base GIS field."
 msgstr ""
 
-#: db/models/fields.py:51
-msgid "The base GIS field -- maps to the OpenGIS Specification Geometry type."
+msgid ""
+"The base Geometry field -- maps to the OpenGIS Specification Geometry type."
 msgstr ""
 
-#: db/models/fields.py:271
 msgid "Point"
-msgstr ""
+msgstr "Pik"
 
-#: db/models/fields.py:275
 msgid "Line string"
-msgstr ""
+msgstr "Chadenn segmant"
 
-#: db/models/fields.py:279
 msgid "Polygon"
-msgstr ""
+msgstr "Poligon"
 
-#: db/models/fields.py:283
 msgid "Multi-point"
-msgstr ""
+msgstr "Liespik"
 
-#: db/models/fields.py:287
 msgid "Multi-line string"
-msgstr ""
+msgstr "Lies chadenn segmant"
 
-#: db/models/fields.py:291
 msgid "Multi polygon"
-msgstr ""
+msgstr "Liespoligon"
 
-#: db/models/fields.py:295
 msgid "Geometry collection"
+msgstr "Dastumad mentoniezh"
+
+msgid "Extent Aggregate Field"
 msgstr ""
 
-#: forms/fields.py:19
+msgid "Raster Field"
+msgstr ""
+
 msgid "No geometry value provided."
-msgstr ""
+msgstr "Talvoudegezh mentoniezh roet ebet."
 
-#: forms/fields.py:20
 msgid "Invalid geometry value."
-msgstr ""
+msgstr "Talvoudegezh mentoniezh direizh."
 
-#: forms/fields.py:21
 msgid "Invalid geometry type."
-msgstr ""
+msgstr "Doare mentoniezh direizh."
 
-#: forms/fields.py:22
 msgid ""
 "An error occurred when transforming the geometry to the SRID of the geometry "
 "form field."
 msgstr ""
+"Ur fazi a zo c'hoarvezet da vare treuzfurmadur an objed mentoniezhel e-barzh "
+"ar vaezienn stumm mentoniezhel SRID."
 
-#: sitemaps/views.py:46
-#, python-format
-msgid "No sitemap available for section: %r"
+msgid "Delete all Features"
 msgstr ""
 
-#: sitemaps/views.py:60
-#, python-format
-msgid "Page %s empty"
-msgstr "Pajenn %s goullo"
+msgid "WKT debugging window:"
+msgstr ""
 
-#: sitemaps/views.py:62
+msgid "Debugging window (serialized value)"
+msgstr ""
+
+msgid "No feeds are registered."
+msgstr ""
+
 #, python-format
-msgid "No page '%s'"
-msgstr "Pajenn '%s' ebet"
+msgid "Slug %r isn't registered."
+msgstr "Neket enrollet ar \"slug\" %r."

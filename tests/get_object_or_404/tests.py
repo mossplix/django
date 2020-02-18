@@ -1,10 +1,8 @@
-from __future__ import absolute_import
-
 from django.http import Http404
-from django.shortcuts import get_object_or_404, get_list_or_404
+from django.shortcuts import get_list_or_404, get_object_or_404
 from django.test import TestCase
 
-from .models import Author, Article
+from .models import Article, Author
 
 
 class GetObjectOr404Tests(TestCase):
@@ -13,10 +11,11 @@ class GetObjectOr404Tests(TestCase):
         a2 = Author.objects.create(name="Patsy")
 
         # No Articles yet, so we should get a Http404 error.
-        self.assertRaises(Http404, get_object_or_404, Article, title="Foo")
+        with self.assertRaises(Http404):
+            get_object_or_404(Article, title="Foo")
 
         article = Article.objects.create(title="Run away!")
-        article.authors = [a1, a2]
+        article.authors.set([a1, a2])
         # get_object_or_404 can be passed a Model to query.
         self.assertEqual(
             get_object_or_404(Article, title__contains="Run"),
@@ -30,9 +29,8 @@ class GetObjectOr404Tests(TestCase):
         )
 
         # No articles containing "Camelot".  This should raise a Http404 error.
-        self.assertRaises(Http404,
-            get_object_or_404, a1.article_set, title__contains="Camelot"
-        )
+        with self.assertRaises(Http404):
+            get_object_or_404(a1.article_set, title__contains="Camelot")
 
         # Custom managers can be used too.
         self.assertEqual(
@@ -49,14 +47,12 @@ class GetObjectOr404Tests(TestCase):
         # Just as when using a get() lookup, you will get an error if more than
         # one object is returned.
 
-        self.assertRaises(Author.MultipleObjectsReturned,
-            get_object_or_404, Author.objects.all()
-        )
+        with self.assertRaises(Author.MultipleObjectsReturned):
+            get_object_or_404(Author.objects.all())
 
         # Using an empty QuerySet raises a Http404 error.
-        self.assertRaises(Http404,
-            get_object_or_404, Article.objects.none(), title__contains="Run"
-        )
+        with self.assertRaises(Http404):
+            get_object_or_404(Article.objects.none(), title__contains="Run")
 
         # get_list_or_404 can be used to get lists of objects
         self.assertEqual(
@@ -65,9 +61,8 @@ class GetObjectOr404Tests(TestCase):
         )
 
         # Http404 is returned if the list is empty.
-        self.assertRaises(Http404,
-            get_list_or_404, a1.article_set, title__icontains="Shrubbery"
-        )
+        with self.assertRaises(Http404):
+            get_list_or_404(a1.article_set, title__icontains="Shrubbery")
 
         # Custom managers can be used too.
         self.assertEqual(
@@ -84,24 +79,28 @@ class GetObjectOr404Tests(TestCase):
     def test_bad_class(self):
         # Given an argument klass that is not a Model, Manager, or Queryset
         # raises a helpful ValueError message
-        self.assertRaisesMessage(ValueError,
-            "Object is of type 'str', but must be a Django Model, Manager, "
-            "or QuerySet",
-            get_object_or_404, "Article", title__icontains="Run"
-        )
+        msg = "First argument to get_object_or_404() must be a Model, Manager, or QuerySet, not 'str'."
+        with self.assertRaisesMessage(ValueError, msg):
+            get_object_or_404("Article", title__icontains="Run")
 
-        class CustomClass(object):
+        class CustomClass:
             pass
 
-        self.assertRaisesMessage(ValueError,
-            "Object is of type 'CustomClass', but must be a Django Model, "
-            "Manager, or QuerySet",
-            get_object_or_404, CustomClass, title__icontains="Run"
-        )
+        msg = "First argument to get_object_or_404() must be a Model, Manager, or QuerySet, not 'CustomClass'."
+        with self.assertRaisesMessage(ValueError, msg):
+            get_object_or_404(CustomClass, title__icontains="Run")
 
         # Works for lists too
-        self.assertRaisesMessage(ValueError,
-            "Object is of type 'list', but must be a Django Model, Manager, "
-            "or QuerySet",
-            get_list_or_404, [Article], title__icontains="Run"
-        )
+        msg = "First argument to get_list_or_404() must be a Model, Manager, or QuerySet, not 'list'."
+        with self.assertRaisesMessage(ValueError, msg):
+            get_list_or_404([Article], title__icontains="Run")
+
+    def test_get_object_or_404_queryset_attribute_error(self):
+        """AttributeError raised by QuerySet.get() isn't hidden."""
+        with self.assertRaisesMessage(AttributeError, 'AttributeErrorManager'):
+            get_object_or_404(Article.attribute_error_objects, id=42)
+
+    def test_get_list_or_404_queryset_attribute_error(self):
+        """AttributeError raised by QuerySet.filter() isn't hidden."""
+        with self.assertRaisesMessage(AttributeError, 'AttributeErrorManager'):
+            get_list_or_404(Article.attribute_error_objects, title__icontains='Run')

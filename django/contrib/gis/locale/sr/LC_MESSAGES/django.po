@@ -1,16 +1,18 @@
 # This file is distributed under the same license as the Django package.
 #
 # Translators:
-# Jannis Leidel <jannis@leidel.info>, 2011.
-# Janos Guljas <janos@resenje.org>, 2012.
+# Branko Kokanovic <branko@kokanovic.org>, 2018
+# Igor Jerosimić, 2020
+# Jannis Leidel <jannis@leidel.info>, 2011
+# Janos Guljas <janos@resenje.org>, 2012
 msgid ""
 msgstr ""
-"Project-Id-Version: Django\n"
+"Project-Id-Version: django\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2012-10-15 10:56+0200\n"
-"PO-Revision-Date: 2012-03-08 12:32+0000\n"
-"Last-Translator: Janos Guljas <janos@resenje.org>\n"
-"Language-Team: Serbian (http://www.transifex.com/projects/p/django/language/"
+"POT-Creation-Date: 2019-09-08 17:27+0200\n"
+"PO-Revision-Date: 2020-01-21 20:08+0000\n"
+"Last-Translator: Igor Jerosimić\n"
+"Language-Team: Serbian (http://www.transifex.com/django/django/language/"
 "sr/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -19,77 +21,70 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n"
 "%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
-#: views.py:9
-msgid "No feeds are registered."
-msgstr "Нема регистрованих фидова."
+msgid "GIS"
+msgstr "GIS"
 
-#: views.py:19
-#, python-format
-msgid "Slug %r isn't registered."
-msgstr "Слаг „%r“ није регистрован."
+msgid "The base GIS field."
+msgstr "Основна GIS поља."
 
-#: db/models/fields.py:51
-msgid "The base GIS field -- maps to the OpenGIS Specification Geometry type."
+msgid ""
+"The base Geometry field — maps to the OpenGIS Specification Geometry type."
 msgstr ""
-"Основно „GIS“ поље које мапира тип геометрије по „OpenGIS“ спецификацији."
+"Основно геометријско поље - мапира тип геометрије по „OpenGIS“ спецификацији."
 
-#: db/models/fields.py:271
 msgid "Point"
 msgstr "Тачка"
 
-#: db/models/fields.py:275
 msgid "Line string"
 msgstr "Линија"
 
-#: db/models/fields.py:279
 msgid "Polygon"
 msgstr "Полигон"
 
-#: db/models/fields.py:283
 msgid "Multi-point"
 msgstr "Више тачака"
 
-#: db/models/fields.py:287
 msgid "Multi-line string"
 msgstr "Више линија"
 
-#: db/models/fields.py:291
 msgid "Multi polygon"
 msgstr "Више полигона"
 
-#: db/models/fields.py:295
 msgid "Geometry collection"
 msgstr "Колекција геопметријских облика"
 
-#: forms/fields.py:19
+msgid "Extent Aggregate Field"
+msgstr "Проширено збирно поље"
+
+msgid "Raster Field"
+msgstr "Растерско поље"
+
 msgid "No geometry value provided."
 msgstr "Нисте задали параметре за геометрију."
 
-#: forms/fields.py:20
 msgid "Invalid geometry value."
 msgstr "Неисправан параметар за геометрију."
 
-#: forms/fields.py:21
 msgid "Invalid geometry type."
 msgstr "Непостојећи тип геометрије."
 
-#: forms/fields.py:22
 msgid ""
 "An error occurred when transforming the geometry to the SRID of the geometry "
 "form field."
 msgstr "Грешка се десила током трансформације геометрије на „SRID“ тип поља."
 
-#: sitemaps/views.py:46
-#, python-format
-msgid "No sitemap available for section: %r"
-msgstr "Нема сајт мапа за секцију: %r"
+msgid "Delete all Features"
+msgstr "Обриши сва својства"
 
-#: sitemaps/views.py:60
-#, python-format
-msgid "Page %s empty"
-msgstr "Страница %s је празна"
+msgid "WKT debugging window:"
+msgstr "WKT прозор за отклањање грешака:"
 
-#: sitemaps/views.py:62
+msgid "Debugging window (serialized value)"
+msgstr "Прозор за отклањање грешака (серијализована вредност)"
+
+msgid "No feeds are registered."
+msgstr "Нема регистрованих фидова."
+
 #, python-format
-msgid "No page '%s'"
-msgstr "Страница „%s“ не постоји"
+msgid "Slug %r isn’t registered."
+msgstr "Слаг %r није регистрован."

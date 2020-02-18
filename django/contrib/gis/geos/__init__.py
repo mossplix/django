@@ -1,14 +1,15 @@
 """
 The GeoDjango GEOS module.  Please consult the GeoDjango documentation
-for more details: 
-  http://geodjango.org/docs/geos.html
+for more details: https://docs.djangoproject.com/en/dev/ref/contrib/gis/geos/
 """
-from django.contrib.gis.geos.geometry import GEOSGeometry, wkt_regex, hex_regex
-from django.contrib.gis.geos.point import Point
-from django.contrib.gis.geos.linestring import LineString, LinearRing
-from django.contrib.gis.geos.polygon import Polygon
-from django.contrib.gis.geos.collections import GeometryCollection, MultiPoint, MultiLineString, MultiPolygon
-from django.contrib.gis.geos.error import GEOSException, GEOSIndexError
-from django.contrib.gis.geos.io import WKTReader, WKTWriter, WKBReader, WKBWriter
-from django.contrib.gis.geos.factory import fromfile, fromstr
-from django.contrib.gis.geos.libgeos import geos_version, geos_version_info, GEOS_PREPARE
+from .collections import (  # NOQA
+    GeometryCollection, MultiLineString, MultiPoint, MultiPolygon,
+)
+from .error import GEOSException  # NOQA
+from .factory import fromfile, fromstr  # NOQA
+from .geometry import GEOSGeometry, hex_regex, wkt_regex  # NOQA
+from .io import WKBReader, WKBWriter, WKTReader, WKTWriter  # NOQA
+from .libgeos import geos_version  # NOQA
+from .linestring import LinearRing, LineString  # NOQA
+from .point import Point  # NOQA
+from .polygon import Polygon  # NOQA
